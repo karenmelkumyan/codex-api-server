@@ -1,0 +1,304 @@
+# codex-api-server Specification
+
+## Purpose
+
+`codex-api-server` is a small local HTTP API server intended to provide a controlled JSON interface around Codex-oriented workflows. The service is designed to run from the current repository root, keep configuration explicit, and grow in small milestones.
+
+The project uses Java, Maven, the JDK built-in `HttpServer`, and Jackson for JSON. It does not use Spring Boot.
+
+## V1 Endpoint Plan
+
+The V1 API should expose a minimal set of endpoints:
+
+- `GET /health`: return basic service health.
+- `GET /api/codex/status`: report whether the configured Codex CLI can run `<CODEX_CLI_PATH> --version`.
+- Session endpoints: create, list, read, and delete saved project session records.
+- Read-only inspection endpoints: expose safe project tree, text file content, and git status/diff output.
+- Codex execution endpoint: accept a scoped request that invokes the configured Codex CLI under strict validation and timeout limits.
+
+`GET /health` is public and returns only simple public server health information.
+Protected `/api/*` routes require bearer token authentication. `GET
+/api/codex/status` is implemented as a diagnostic route. Project session
+management endpoints and read-only project inspection endpoints are implemented.
+Non-interactive Codex execution is implemented for saved sessions. Unknown paths
+return a structured JSON `404`.
+
+## V1 Implemented Status
+
+V1 currently implements:
+
+- `GET /health`
+- `GET /api/codex/status`
+- `POST /api/sessions`
+- `GET /api/sessions`
+- `GET /api/sessions/{sessionId}`
+- `DELETE /api/sessions/{sessionId}`
+- `GET /api/sessions/{sessionId}/tree`
+- `GET /api/sessions/{sessionId}/files/content?path=...`
+- `GET /api/sessions/{sessionId}/git/status`
+- `GET /api/sessions/{sessionId}/git/diff`
+- `POST /api/sessions/{sessionId}/codex/exec`
+- `GET /api/sessions/{sessionId}/history`
+
+Streaming responses and async job management are deferred beyond V1.
+
+## Session Concept
+
+A session represents one saved project context managed by the API server. Session records include:
+
+- `sessionId`
+- `name`
+- `workingDirectory`
+- `description`
+- `createdAt`
+- `lastUsedAt`
+- `defaultTimeoutSeconds`
+
+Session data should be persisted under the configured sessions file path. The default is relative to the current repository root:
+
+```text
+./data/sessions.json
+```
+
+Session handling should avoid embedding machine-specific absolute paths unless they are explicitly supplied by a caller and are safe to retain.
+
+Session endpoints:
+
+- `POST /api/sessions`: create a saved project session.
+- `GET /api/sessions`: list saved sessions.
+- `GET /api/sessions/{sessionId}`: read a saved session.
+- `DELETE /api/sessions/{sessionId}`: delete only the saved session record.
+
+Deleting a session must not delete project files.
+
+Session validation rules:
+
+- `name` is required and non-blank.
+- `workingDirectory` is required and non-blank.
+- Relative `workingDirectory` values are accepted.
+- `workingDirectory` is resolved with `Path.of(input).toAbsolutePath().normalize()`.
+- The normalized absolute working directory is stored and returned as the session root.
+- `workingDirectory` must exist.
+- `workingDirectory` must be a directory.
+- `defaultTimeoutSeconds` is optional.
+- `defaultTimeoutSeconds`, when provided, must be positive.
+- `defaultTimeoutSeconds`, when provided, must not exceed `CODEX_EXEC_MAX_TIMEOUT`.
+
+## Read-Only Endpoints
+
+Read-only endpoints should provide safe introspection without mutating project files. Git inspection uses read-only git commands through `ProcessRunner`.
+
+Planned read-only behavior includes:
+
+- Checking configured Codex CLI availability.
+- Listing known sessions.
+- Reading session metadata.
+- Reading a bounded project tree.
+- Reading bounded text file content.
+- Reading git status and diff output.
+- Returning status information needed by clients.
+
+Read-only responses must not reveal secrets such as API tokens.
+
+Read-only inspection endpoints:
+
+- `GET /api/sessions/{sessionId}/tree`
+- `GET /api/sessions/{sessionId}/files/content?path=...`
+- `GET /api/sessions/{sessionId}/git/status`
+- `GET /api/sessions/{sessionId}/git/diff`
+
+Path security rules:
+
+- Session roots are resolved to real paths before file inspection.
+- Requested paths are resolved against the session root and normalized.
+- Existing requested paths are checked with real path containment.
+- Requested paths must remain inside the real session root.
+- Symlinks must not allow access outside the session root.
+
+Tree behavior:
+
+- Default `path` is `.`.
+- Default `maxDepth` is `4`.
+- Default `limit` is `500`.
+- Skip heavy/common directories by default, including `.git`, `target`, `build`, `node_modules`, `.idea`, and `.gradle`.
+- Do not follow symlink directories.
+- Return relative paths from the session root.
+
+File content behavior:
+
+- `path` is required.
+- Default `maxBytes` is `200000`.
+- Default `encoding` is `UTF-8`.
+- Files must exist and be regular files.
+- Obvious binary files are rejected with `BINARY_FILE_NOT_SUPPORTED`.
+- Content is truncated when it exceeds `maxBytes`.
+
+Git inspection behavior:
+
+- `GET /api/sessions/{sessionId}/git/status` runs `git --no-pager status --short --branch`.
+- `GET /api/sessions/{sessionId}/git/diff` runs `git --no-pager diff --no-ext-diff` by default.
+- `GET /api/sessions/{sessionId}/git/diff?staged=true` runs `git --no-pager diff --no-ext-diff --staged`.
+- Git commands use `ProcessRunner` directly without a shell.
+- Git commands run with the session working directory.
+- Process output capture is bounded by default to `1000000` bytes each for stdout and stderr.
+- Git diff passes the endpoint `maxBytes` value as its stdout capture limit.
+
+## Codex Execution Endpoint
+
+The Codex execution endpoint runs only the configured Codex CLI path and must not provide arbitrary shell execution.
+
+The endpoint should:
+
+- Accept structured JSON input.
+- Validate requested session and working directory constraints.
+- Apply default and maximum timeout settings.
+- Capture structured process output.
+- Persist session updates where appropriate.
+- Return clear JSON errors for validation failures, timeouts, and process failures.
+- Pass the prompt to Codex through stdin.
+- Avoid dangerous bypass/yolo flags.
+
+Codex execution route:
+
+- `POST /api/sessions/{sessionId}/codex/exec`
+
+Command shape:
+
+```text
+<CODEX_CLI_PATH> exec --cd <session-root> --color never [options] --output-last-message <temp-file> -
+```
+
+Allowed request fields:
+
+- `prompt`: required non-blank text, passed on stdin.
+- `timeoutSeconds`: optional positive integer not exceeding `CODEX_EXEC_MAX_TIMEOUT`.
+- `model`: optional non-blank model name.
+- `profile`: optional non-blank profile name.
+- `sandbox`: optional; allowed values are `read-only` and `workspace-write`.
+- `approvalPolicy`: optional; allowed values are `untrusted`, `on-request`, and `never`.
+- `ephemeral`: optional boolean.
+- `skipGitRepoCheck`: optional boolean.
+
+The unrestricted full-access sandbox mode is not allowed in V1. Execution uses `ProcessBuilder`
+directly without a shell. Approval policy is passed as a Codex config override.
+Stderr may contain progress logs and is not treated as failure by itself.
+
+Approval policy mapping:
+
+- `untrusted` maps to `-c approval_policy="untrusted"`.
+- `on-request` maps to `-c approval_policy="on-request"`.
+- `never` maps to `-c approval_policy="never"`.
+
+The server does not use `--ask-for-approval` because the installed Codex CLI
+version tested for this milestone does not support that flag for `codex exec`.
+Local CLI support can be checked with:
+
+```bash
+codex exec --help
+```
+
+Codex CLI flags may vary by version. This server intentionally supports only the
+tested V1-safe subset documented here.
+
+Execution history:
+
+- `GET /api/sessions/{sessionId}/history`
+- Stores metadata only.
+- Includes execution ID, session ID, timestamps, exit code, duration, timeout flag, a prompt-omitted placeholder, and short stdout/stderr previews.
+- Preview limits are 500 characters for stdout/stderr, with a truncation marker when capped.
+- Does not persist full stdout/stderr by default.
+- Does not persist raw prompt text.
+- Updates session `lastUsedAt` after execution attempts.
+
+## Security Rules
+
+Security rules for this project:
+
+- Do not expose arbitrary shell execution.
+- Only invoke the configured Codex CLI for Codex execution.
+- Pass prompts through stdin instead of command arguments.
+- Bind to `127.0.0.1` by default.
+- Require `CODEX_ALLOW_REMOTE_BIND=true` before binding to non-local hosts.
+- Keep `GET /health` public.
+- Require bearer token authentication for protected `/api/*` routes.
+- Return `AUTH_TOKEN_NOT_CONFIGURED` if a protected API route is called without `CODEX_API_TOKEN` configured.
+- Never include token values in health, config, log, or error responses.
+- Validate all numeric configuration values.
+- Run diagnostic processes with `ProcessBuilder` directly, not through a shell.
+- Enforce execution timeouts when command execution is introduced.
+- Keep file access scoped and explicit.
+- Prefer structured JSON input over free-form command strings.
+
+## Configuration Environment Variables
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `CODEX_API_HOST` | `127.0.0.1` | Host address for the HTTP server. |
+| `CODEX_API_PORT` | `8765` | Port for the HTTP server. |
+| `CODEX_API_TOKEN` | unset | Bearer token for protected `/api/*` routes. |
+| `CODEX_CLI_PATH` | `codex` | Path or command name for the Codex CLI. |
+| `CODEX_SESSIONS_FILE` | `./data/sessions.json` | Session storage file path. |
+| `CODEX_EXEC_DEFAULT_TIMEOUT` | `600` | Default execution timeout in seconds. |
+| `CODEX_EXEC_MAX_TIMEOUT` | `1800` | Maximum execution timeout in seconds. |
+| `CODEX_ALLOW_REMOTE_BIND` | `false` | Allows binding to non-local hosts when set to `true`. |
+| `CODEX_MAX_REQUEST_BYTES` | `1000000` | Maximum JSON request body size for POST endpoints. |
+
+## Implementation Milestones
+
+### Milestone 1: Project Skeleton
+
+- Maven project structure.
+- Main class.
+- Environment-based configuration.
+- JSON utility.
+- Basic router placeholder.
+- README with build and run instructions.
+- Repository-owned specification.
+
+### Milestone 2: HTTP Foundation
+
+- Route abstraction and request helpers.
+- Consistent JSON error responses.
+- Request method handling.
+- Bearer token authentication for `/api/*` routes.
+- Structured JSON error responses.
+
+### Milestone 3: Codex CLI Status
+
+- Remove authentication metadata from the public health response.
+- Add reusable process runner with timeout support.
+- Implement authenticated `GET /api/codex/status`.
+- Run `<CODEX_CLI_PATH> --version` directly through `ProcessBuilder`.
+- Return diagnostic `available: false` responses instead of HTTP 500 when Codex is unavailable.
+
+### Milestone 4: Session Storage
+
+- Session model.
+- Session repository backed by `CODEX_SESSIONS_FILE`.
+- Session creation, listing, retrieval, and deletion endpoints.
+- Validation for names, working directories, and timeout limits.
+- Atomic JSON writes where reasonably simple.
+
+### Milestone 5: Read-Only API
+
+- Add safe path containment checks.
+- Read bounded project tree data.
+- Read bounded text file content.
+- Expose read-only git status and diff data.
+- Add validation and structured error handling around inspection routes.
+
+### Milestone 6: Controlled Codex Execution
+
+- Implement the structured Codex execution endpoint.
+- Enforce command path, working directory, and timeout constraints.
+- Capture output safely.
+- Persist execution metadata and previews to session history.
+- Update `lastUsedAt` after execution attempts.
+- Keep full stdout/stderr out of persisted history by default.
+
+### Milestone 7: Hardening
+
+- Add broader tests.
+- Improve logging.
+- Document operational guidance.
+- Review security behavior before remote binding or multi-user access.
