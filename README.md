@@ -3,11 +3,12 @@
 A small Java/Maven HTTP API server for controlled local Codex integrations.
 
 V1 is ready for local use with token-protected APIs, saved project sessions,
-read-only inspection, and controlled non-interactive Codex execution.
+read-only inspection, controlled non-interactive Codex execution, and optional
+outbound connector mode for `eme-codex-bridge` relay jobs.
 
 See [SPEC.md](SPEC.md) for the repository-owned project specification.
 
-The current implementation intentionally keeps the server narrow:
+The current implementation intentionally keeps the server local and explicit:
 
 - Java with Maven
 - JDK built-in `HttpServer`
@@ -19,6 +20,10 @@ The current implementation intentionally keeps the server narrow:
 - Server-side project session management
 - Read-only project inspection endpoints
 - Non-interactive Codex execution for saved sessions
+- Optional outbound connector mode for `eme-codex-bridge`
+- Local agent bootstrap, state storage, and pairing-code requests
+- Authenticated outbound `/agent/ws` WebSocket with hello, heartbeat, and reconnect
+- Relay execution for `codex_readonly`, `codex_verify`, and `codex_change`
 - No arbitrary shell execution
 
 ## Requirements
@@ -61,6 +66,14 @@ By default, the server listens on:
 
 ```text
 http://127.0.0.1:8765
+```
+
+To run with outbound connector mode enabled:
+
+```bash
+CODEX_API_TOKEN=dev-token \
+CODEX_AGENT_BRIDGE_BASE_URL=http://127.0.0.1:8787 \
+./scripts/run-agent-dev.sh
 ```
 
 ## Run Packaged Jar
@@ -106,6 +119,13 @@ CODEX_API_TOKEN=dev-token mvn exec:java
 curl -H 'Authorization: Bearer dev-token' http://127.0.0.1:8765/api/codex/status
 ```
 
+Connector diagnostics:
+
+```bash
+CODEX_API_TOKEN=dev-token ./scripts/agent-status.sh
+CODEX_API_TOKEN=dev-token ./scripts/agent-pairing-code.sh
+```
+
 Create a session:
 
 ```bash
@@ -135,9 +155,198 @@ Configuration is read from environment variables.
 | `CODEX_EXEC_MAX_TIMEOUT` | `1800` | Maximum execution timeout in seconds. |
 | `CODEX_ALLOW_REMOTE_BIND` | `false` | Allows binding to non-local hosts when set to `true`. |
 | `CODEX_MAX_REQUEST_BYTES` | `1000000` | Maximum JSON request body size for POST endpoints. |
+| `CODEX_AGENT_ENABLED` | `false` | Enables the optional outbound local-agent connector foundation. |
+| `CODEX_AGENT_BRIDGE_BASE_URL` | unset | Bridge base URL for connector bootstrap, pairing, status, and WebSocket paths. |
+| `CODEX_AGENT_STATE_FILE` | `./data/agent.json` | Local connector identity storage file. |
+| `CODEX_AGENT_DISPLAY_NAME` | `Codex Local Agent` | Human-readable connector display name sent to the bridge. |
+| `CODEX_AGENT_CLIENT_VERSION` | `codex-api-server/0.1.0-SNAPSHOT` | Connector client version sent to the bridge. |
+| `CODEX_AGENT_WORKING_DIRECTORY` | `.` | Local repository root for relay job execution, stored as a normalized absolute path. |
+| `CODEX_AGENT_AUTO_BOOTSTRAP` | `true` | Allows the connector to bootstrap a local agent identity when no state exists. |
+| `CODEX_AGENT_AUTO_PAIR_ON_FIRST_BOOTSTRAP` | `true` | Allows first bootstrap to request and show a pairing code. |
+| `CODEX_AGENT_PAIR_ON_START` | `false` | Requests a fresh pairing code on each connector start when enabled. |
+| `CODEX_AGENT_HEARTBEAT_INTERVAL_SECONDS` | `30` | Connector WebSocket heartbeat interval. |
+| `CODEX_AGENT_RECONNECT_INITIAL_SECONDS` | `2` | Initial reconnect delay for bridge connection attempts. |
+| `CODEX_AGENT_RECONNECT_MAX_SECONDS` | `60` | Maximum reconnect delay for bridge connection attempts. |
+| `CODEX_AGENT_JOB_MAX_TIMEOUT_SECONDS` | `CODEX_EXEC_MAX_TIMEOUT` | Maximum relay job timeout accepted by the connector. |
 
 Remote binding is disabled by default. If `CODEX_API_HOST` is set to a non-local
 address, `CODEX_ALLOW_REMOTE_BIND=true` must also be set.
+
+Connector mode is also disabled by default and is outbound-only. If
+`CODEX_AGENT_ENABLED=true` is set without `CODEX_AGENT_BRIDGE_BASE_URL`, the
+HTTP server can still start and the connector remains inactive until a bridge
+URL is configured. The local agent state file stores `agentSecret`; it is written
+with owner-only permissions where the filesystem supports POSIX permissions.
+The connector capability payload reports Codex CLI availability and supported
+relay tool modes without sending the full working directory path.
+When active, connector startup loads existing local identity state, bootstraps
+only when state is missing and auto-bootstrap is enabled, and prints pairing
+code details without printing the stored agent secret.
+Once state is ready, the connector starts the outbound WebSocket in the
+background, sends `agent.hello`, keeps heartbeat diagnostics, and currently
+accepts relay jobs for `codex_readonly`, `codex_verify`, and `codex_change`.
+Relay execution is single-job-at-a-time, uses `approvalPolicy=never` and
+ephemeral Codex runs, and returns safe result fields without raw stderr or
+command-line details.
+This repository implements the connector-side support; EME Chat pairing UI and
+the full end-to-end product flow still need separate validation with those
+systems.
+
+## Connector Relay Smoke Flow
+
+This manual flow validates the bridge plus connector path without EME Chat UI.
+It assumes `../eme-codex-bridge` is checked out next to this repository, MySQL
+is available for the bridge, and EME backend credentials/session values are
+configured for bridge registration. The examples use `jq` for convenience; if
+it is unavailable, copy the printed JSON values manually.
+
+1. Start the bridge and its database:
+
+```bash
+cd ../eme-codex-bridge
+docker compose up -d mysql
+
+export BRIDGE_ADMIN_TOKEN=dev-bridge-token
+export EME_API_BASE_URL=https://eme-api.example.test
+export EME_SECRET_KEY=eme-registration-secret
+export BRIDGE_PUBLIC_BASE_URL=http://127.0.0.1:8787
+export BRIDGE_AGENT_BOOTSTRAP_ENABLED=true
+export BRIDGE_AGENT_RELAY_ENABLED=true
+./scripts/run-dev.sh
+```
+
+2. In this repository, start `codex-api-server` with connector mode enabled:
+
+```bash
+cd ../codex-api-server
+export CODEX_API_TOKEN=dev-token
+export CODEX_AGENT_ENABLED=true
+export CODEX_AGENT_BRIDGE_BASE_URL=http://127.0.0.1:8787
+export CODEX_AGENT_WORKING_DIRECTORY="$(pwd)"
+export CODEX_AGENT_STATE_FILE=./data/agent.json
+./scripts/run-agent-dev.sh
+```
+
+The connector bootstraps `agentId + agentSecret` on first start, stores them in
+`CODEX_AGENT_STATE_FILE`, opens the outbound WebSocket, and prints a pairing
+code when first-bootstrap pairing is enabled.
+
+3. Check local connector status and request a fresh pairing code:
+
+```bash
+export CODEX_API_TOKEN=dev-token
+AGENT_STATUS_JSON="$(./scripts/agent-status.sh)"
+echo "$AGENT_STATUS_JSON" | jq .
+
+PAIRING_JSON="$(./scripts/agent-pairing-code.sh)"
+echo "$PAIRING_JSON" | jq .
+
+PAIRING_CODE="$(printf '%s' "$PAIRING_JSON" | jq -r '.pairingCode')"
+AGENT_ID="$(printf '%s' "$AGENT_STATUS_JSON" | jq -r '.agentId')"
+```
+
+`/api/agent/status` should show `active: true` and eventually
+`connected: true`. It never returns `agentSecret`.
+
+4. Claim the pairing code through the bridge. This substitutes for future EME
+Chat pairing UI:
+
+```bash
+export BRIDGE_BASE_URL=http://127.0.0.1:8787
+export BRIDGE_ADMIN_TOKEN=dev-bridge-token
+export EXTERNAL_OWNER_ID=manual-owner-1
+
+CLAIM_JSON="$(curl -sS -X POST "${BRIDGE_BASE_URL%/}/api/agent-pairings/claim" \
+  -H "Authorization: Bearer ${BRIDGE_ADMIN_TOKEN}" \
+  -H 'Content-Type: application/json' \
+  -d "{
+    \"pairingCode\": \"${PAIRING_CODE}\",
+    \"externalOwnerId\": \"${EXTERNAL_OWNER_ID}\",
+    \"expectedAgentType\": \"codex\"
+  }")"
+echo "$CLAIM_JSON" | jq .
+
+AGENT_ID="$(printf '%s' "$CLAIM_JSON" | jq -r '.agentId')"
+```
+
+5. Create an `AGENT_RELAY` bridge registration for an EME session:
+
+```bash
+export EME_SESSION_ID=123
+export EME_SESSION_TOKEN=session-token-from-eme
+
+REGISTRATION_JSON="$(curl -sS -X POST "${BRIDGE_BASE_URL%/}/api/registrations" \
+  -H "Authorization: Bearer ${BRIDGE_ADMIN_TOKEN}" \
+  -H 'Content-Type: application/json' \
+  -d "{
+    \"emeSessionId\": ${EME_SESSION_ID},
+    \"emeSessionToken\": \"${EME_SESSION_TOKEN}\",
+    \"name\": \"local-codex-agent\",
+    \"routingMode\": \"AGENT_RELAY\",
+    \"agentId\": \"${AGENT_ID}\",
+    \"externalOwnerId\": \"${EXTERNAL_OWNER_ID}\",
+    \"verifyAccess\": true
+  }")"
+echo "$REGISTRATION_JSON" | jq .
+
+BRIDGE_KEY="$(printf '%s' "$REGISTRATION_JSON" | jq -r '.bridgeKey')"
+```
+
+For local bridge-only experiments you can set `"verifyAccess": false`, but a
+real registration still needs bridge EME configuration when tool registration is
+part of the flow.
+
+6. Submit a relay tool call through the bridge and read the result through
+`codex_read_log`:
+
+```bash
+SUBMIT_JSON="$(curl -sS -X POST "${BRIDGE_BASE_URL%/}/tools/${BRIDGE_KEY}/codex_readonly" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "message": "Inspect this repository and summarize the connector mode implementation.",
+    "timeoutSeconds": 600
+  }')"
+echo "$SUBMIT_JSON" | jq .
+
+JOB_ID="$(printf '%s' "$SUBMIT_JSON" | jq -r '.jobId')"
+
+curl -sS -X POST "${BRIDGE_BASE_URL%/}/tools/${BRIDGE_KEY}/codex_read_log" \
+  -H 'Content-Type: application/json' \
+  -d "{
+    \"limit\": 20,
+    \"includeCompleted\": true,
+    \"includeRunning\": true,
+    \"includeFailed\": true
+  }" | jq --arg job_id "$JOB_ID" '.jobs[] | select(.jobId == $job_id)'
+```
+
+The bridge dispatches `job.request` over the connector WebSocket. The connector
+sends `job.accepted`, executes Codex locally, and sends `job.result`; the bridge
+stores the safe response for `codex_read_log`.
+
+## Relay Execution Internals
+
+Relay jobs do not call the local HTTP API. The connector shares the same
+`ProcessRunner` and `SessionService` that `Router` uses, then calls
+`CodexService.execute(...)` directly with a generated `CodexExecRequest`.
+
+For relay execution, the connector creates or reuses an internal saved session
+with session id `agent_connector` and working directory
+`CODEX_AGENT_WORKING_DIRECTORY`. That session is stored in `CODEX_SESSIONS_FILE`
+and may appear in `/api/sessions`. Because execution goes through
+`CodexService`, relay jobs write the same metadata-only execution history as
+normal `POST /api/sessions/{sessionId}/codex/exec` calls: prompt text is
+omitted, stdout/stderr previews are bounded, and the session `lastUsedAt` value
+is updated.
+
+If the WebSocket disconnects while Codex is still running, V1 lets the local
+Codex process continue. When the process completes, the connector attempts to
+send `job.result` on the same WebSocket instance that delivered the original
+`job.request`. It does not queue that result for replay on a later reconnect. If
+that socket is already closed, the result is effectively dropped from the
+connector side; the bridge remains authoritative for marking disconnected or
+stale relay jobs failed or timed out. Local execution history may still be
+written even when the bridge never receives the final result.
 
 ## Current Routes
 
@@ -145,6 +354,8 @@ address, `CODEX_ALLOW_REMOTE_BIND=true` must also be set.
 | --- | --- | --- |
 | `GET` | `/health` | Returns a basic JSON health response. |
 | `GET` | `/api/codex/status` | Checks whether the configured Codex CLI can run `<CODEX_CLI_PATH> --version`. |
+| `GET` | `/api/agent/status` | Returns safe local connector diagnostics. |
+| `POST` | `/api/agent/pairing-code` | Requests a bridge pairing code for an existing local agent state. |
 | `POST` | `/api/sessions` | Creates a saved project session. |
 | `GET` | `/api/sessions` | Lists saved project sessions. |
 | `GET` | `/api/sessions/{sessionId}` | Reads one saved project session. |

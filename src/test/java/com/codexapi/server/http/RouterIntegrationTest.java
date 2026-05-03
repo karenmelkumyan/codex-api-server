@@ -1,5 +1,6 @@
 package com.codexapi.server.http;
 
+import com.codexapi.server.config.AgentConfig;
 import com.codexapi.server.config.Config;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
@@ -14,6 +15,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.file.Path;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -38,7 +40,11 @@ final class RouterIntegrationTest {
                 600,
                 1800,
                 false,
-                64
+                64,
+                AgentConfig.fromEnvironment(Map.of(
+                        "CODEX_AGENT_STATE_FILE", tempDir.resolve("agent-state.json").toString(),
+                        "CODEX_AGENT_WORKING_DIRECTORY", tempDir.toString()
+                ))
         );
         server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
         server.createContext("/", new Router(config));

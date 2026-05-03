@@ -2,7 +2,7 @@
 
 ## Purpose
 
-`codex-api-server` is a small local HTTP API server intended to provide a controlled JSON interface around Codex-oriented workflows. The service is designed to run from the current repository root, keep configuration explicit, and grow in small milestones.
+`codex-api-server` is a small local HTTP API server intended to provide a controlled JSON interface around Codex-oriented workflows. The service is designed to run from the current repository root, keep configuration explicit, and grow in small milestones. It also provides optional outbound connector-side support for `eme-codex-bridge` local-agent relay mode.
 
 The project uses Java, Maven, the JDK built-in `HttpServer`, and Jackson for JSON. It does not use Spring Boot.
 
@@ -12,6 +12,8 @@ The V1 API should expose a minimal set of endpoints:
 
 - `GET /health`: return basic service health.
 - `GET /api/codex/status`: report whether the configured Codex CLI can run `<CODEX_CLI_PATH> --version`.
+- `GET /api/agent/status`: return safe local connector diagnostics.
+- `POST /api/agent/pairing-code`: request a pairing code for an existing local connector identity.
 - Session endpoints: create, list, read, and delete saved project session records.
 - Read-only inspection endpoints: expose safe project tree, text file content, and git status/diff output.
 - Codex execution endpoint: accept a scoped request that invokes the configured Codex CLI under strict validation and timeout limits.
@@ -23,12 +25,20 @@ management endpoints and read-only project inspection endpoints are implemented.
 Non-interactive Codex execution is implemented for saved sessions. Unknown paths
 return a structured JSON `404`.
 
+Optional connector mode is also implemented for the local side of
+`eme-codex-bridge` relay registration. It is disabled by default, connects
+outward to the bridge, stores local agent identity state, requests pairing
+codes, maintains an authenticated WebSocket, and executes relay jobs for
+`codex_readonly`, `codex_verify`, and `codex_change`.
+
 ## V1 Implemented Status
 
 V1 currently implements:
 
 - `GET /health`
 - `GET /api/codex/status`
+- `GET /api/agent/status`
+- `POST /api/agent/pairing-code`
 - `POST /api/sessions`
 - `GET /api/sessions`
 - `GET /api/sessions/{sessionId}`
@@ -223,6 +233,7 @@ Security rules for this project:
 - Require bearer token authentication for protected `/api/*` routes.
 - Return `AUTH_TOKEN_NOT_CONFIGURED` if a protected API route is called without `CODEX_API_TOKEN` configured.
 - Never include token values in health, config, log, or error responses.
+- Never include connector `agentSecret` values in logs, API responses, `toString`, or exception messages.
 - Validate all numeric configuration values.
 - Run diagnostic processes with `ProcessBuilder` directly, not through a shell.
 - Enforce execution timeouts when command execution is introduced.
@@ -242,6 +253,151 @@ Security rules for this project:
 | `CODEX_EXEC_MAX_TIMEOUT` | `1800` | Maximum execution timeout in seconds. |
 | `CODEX_ALLOW_REMOTE_BIND` | `false` | Allows binding to non-local hosts when set to `true`. |
 | `CODEX_MAX_REQUEST_BYTES` | `1000000` | Maximum JSON request body size for POST endpoints. |
+| `CODEX_AGENT_ENABLED` | `false` | Enables the optional outbound local-agent connector foundation. |
+| `CODEX_AGENT_BRIDGE_BASE_URL` | unset | Bridge base URL for connector bootstrap, pairing, status, and WebSocket paths. |
+| `CODEX_AGENT_STATE_FILE` | `./data/agent.json` | Local connector identity storage file. |
+| `CODEX_AGENT_DISPLAY_NAME` | `Codex Local Agent` | Human-readable connector display name sent to the bridge. |
+| `CODEX_AGENT_CLIENT_VERSION` | `codex-api-server/0.1.0-SNAPSHOT` | Connector client version sent to the bridge. |
+| `CODEX_AGENT_WORKING_DIRECTORY` | `.` | Local repository root for relay job execution, stored as a normalized absolute path. |
+| `CODEX_AGENT_AUTO_BOOTSTRAP` | `true` | Allows the connector to bootstrap a local agent identity when no state exists. |
+| `CODEX_AGENT_AUTO_PAIR_ON_FIRST_BOOTSTRAP` | `true` | Allows first bootstrap to request and show a pairing code. |
+| `CODEX_AGENT_PAIR_ON_START` | `false` | Requests a fresh pairing code on each connector start when enabled. |
+| `CODEX_AGENT_HEARTBEAT_INTERVAL_SECONDS` | `30` | Connector WebSocket heartbeat interval. |
+| `CODEX_AGENT_RECONNECT_INITIAL_SECONDS` | `2` | Initial reconnect delay for bridge connection attempts. |
+| `CODEX_AGENT_RECONNECT_MAX_SECONDS` | `60` | Maximum reconnect delay for bridge connection attempts. |
+| `CODEX_AGENT_JOB_MAX_TIMEOUT_SECONDS` | `CODEX_EXEC_MAX_TIMEOUT` | Maximum relay job timeout accepted by the connector. |
+
+## Connector Mode Foundation
+
+Connector mode is optional and disabled by default. It is intended to connect
+outward to `eme-codex-bridge` without adding public inbound ports. If
+`CODEX_AGENT_ENABLED=true` is configured without `CODEX_AGENT_BRIDGE_BASE_URL`,
+the HTTP server should still start and the connector should report that it is
+inactive because the bridge URL is missing.
+
+The connector identity state file contains:
+
+- `agentId`
+- `agentSecret`
+- `agentType`
+- `bridgeBaseUrl`
+- `relayWebSocketUrl`
+- `displayName`
+- `createdAt`
+- `lastConnectedAt`
+
+The state file must be written atomically. Parent directories are created when
+needed, and owner-only POSIX permissions are applied to the state directory and
+file where the filesystem supports them. If the state file exists but is invalid,
+startup or state-store initialization must fail clearly and must not overwrite
+the file. The user can delete `CODEX_AGENT_STATE_FILE` to reset the local
+connector identity.
+
+Connector startup runs after the local HTTP server starts and must not break the
+existing local HTTP API when connector work fails. Startup is a no-op when
+`CODEX_AGENT_ENABLED=false`, and reports inactive when enabled without
+`CODEX_AGENT_BRIDGE_BASE_URL`. If valid state already exists, the connector
+loads it and must not bootstrap again. If no state exists and
+`CODEX_AGENT_AUTO_BOOTSTRAP=true`, it bootstraps through the bridge, stores the
+returned identity locally, and can request one pairing code. If
+`CODEX_AGENT_AUTO_BOOTSTRAP=false`, missing state leaves the connector inactive.
+If `CODEX_AGENT_AUTO_PAIR_ON_FIRST_BOOTSTRAP=true` and
+`CODEX_AGENT_PAIR_ON_START=true`, startup requests only one pairing code. If
+saved state belongs to a different bridge base URL than the configured
+`CODEX_AGENT_BRIDGE_BASE_URL`, startup reports an inactive/error state with
+reset guidance and does not overwrite the state file.
+
+Connector bootstrap capabilities are safe to send to the bridge and must not
+include the full working directory path. The capabilities object includes:
+
+- `codexCliAvailable`
+- `codexCliVersion` when the Codex CLI status command succeeds
+- `supportsReadonly`
+- `supportsVerify`
+- `supportsChange`
+- `workingDirectoryConfigured`
+
+The bridge HTTP client supports `POST /agent/bootstrap`, `POST
+/agent/pairing-codes`, and `GET /agent/status`. Bootstrap is unauthenticated.
+Pairing-code and status calls send `X-Agent-Id` and `Authorization: Bearer
+<agentSecret>`. Non-2xx bridge responses must be converted to safe local
+exceptions that do not include `agentSecret` values or auth headers. If
+bootstrap omits `relayWebSocketUrl`, the connector derives `/agent/ws` from
+`CODEX_AGENT_BRIDGE_BASE_URL`, using `ws` for `http` and `wss` for `https`.
+The local `GET /api/agent/status` and `POST /api/agent/pairing-code` endpoints
+are protected by the existing `CODEX_API_TOKEN` authentication. Status responses
+must never include `agentSecret`; the pairing-code endpoint requires existing
+agent state and returns `ok`, `pairingCode`, `expiresAt`, and `connectUrl`.
+This repository implements connector-side support only; EME Chat pairing UI and
+the full end-to-end product flow require separate validation outside this repo.
+
+When local agent state is ready, the connector starts an outbound WebSocket
+connection to `relayWebSocketUrl` in the background using `X-Agent-Id` and
+`Authorization: Bearer <agentSecret>`. On open, it updates connection
+diagnostics, persists `lastConnectedAt` when practical, and sends `agent.hello`
+with safe metadata and capabilities. The WebSocket client sends heartbeat
+`ping` messages, replies to bridge `ping` messages with `pong`, treats
+`pong`/`agent.hello_ack` as last-seen diagnostics, buffers partial text frames
+until `last=true`, and reconnects after close/error/connect failure with
+exponential backoff capped by configuration.
+
+Incoming `job.request` messages are accepted immediately, then dispatched to a
+single local relay job executor. The connector supports `codex_readonly`,
+`codex_verify`, and `codex_change`, caps requested timeouts by both connector
+and Codex execution maximums, and returns safe `job.result` fields without raw
+stderr, command-line details, or secrets. Unsupported tools, including
+`codex_read_log`, return `UNSUPPORTED_TOOL` after `job.accepted`.
+
+Relay jobs reuse the same internal execution path as the local Codex execution
+endpoint. The connector shares the process runner and session service used by
+the HTTP router, creates or reuses an internal saved session with session id
+`agent_connector`, and calls `CodexService.execute(...)` directly rather than
+making an HTTP request back to `127.0.0.1`. The internal session uses
+`CODEX_AGENT_WORKING_DIRECTORY`, is persisted in `CODEX_SESSIONS_FILE`, and may
+appear in `/api/sessions`. Relay executions therefore write the same
+metadata-only execution history as normal Codex execution calls: prompt text is
+omitted, stdout/stderr previews are bounded, and the session `lastUsedAt` value
+is updated.
+
+If the bridge disconnects while a relay job is running, V1 lets the local Codex
+process continue. When the process completes, the connector attempts to send
+`job.result` on the same WebSocket instance that delivered the original
+`job.request`. It does not queue or replay the result after reconnect. If that
+socket is closed, the result is effectively dropped from the connector side, and
+bridge-side disconnect/stale-job handling remains authoritative. Local
+execution history may still be written even when the bridge never receives the
+final relay result.
+
+## Connector Relay Manual Smoke Flow
+
+This repository implements connector-side support only. A full product flow
+still requires `eme-codex-bridge`, EME backend credentials, and later EME Chat
+pairing UI. Until that UI exists, an operator can validate bridge relay mode
+manually:
+
+1. Start `../eme-codex-bridge` with MySQL, admin auth, EME credentials,
+   `BRIDGE_AGENT_BOOTSTRAP_ENABLED=true`, and `BRIDGE_AGENT_RELAY_ENABLED=true`.
+2. Start this server with `CODEX_AGENT_ENABLED=true`,
+   `CODEX_AGENT_BRIDGE_BASE_URL=http://127.0.0.1:8787`,
+   `CODEX_API_TOKEN`, and `CODEX_AGENT_WORKING_DIRECTORY` set to the local repo.
+3. Call local `GET /api/agent/status` with the Codex API bearer token and verify
+   the connector is active and connected.
+4. Call local `POST /api/agent/pairing-code` with the Codex API bearer token and
+   copy the returned one-time `pairingCode`.
+5. Claim the code through bridge `POST /api/agent-pairings/claim` with
+   `BRIDGE_ADMIN_TOKEN`, an operator-chosen `externalOwnerId`, and
+   `expectedAgentType=codex`.
+6. Create a bridge registration with `POST /api/registrations`,
+   `routingMode=AGENT_RELAY`, the claimed `agentId`, the same
+   `externalOwnerId`, and real EME session values.
+7. Submit a bridge tool call such as
+   `POST /tools/{bridgeKey}/codex_readonly` with a non-blank `message`.
+8. Read status and final output through
+   `POST /tools/{bridgeKey}/codex_read_log`.
+
+The bridge dispatches `job.request` over `/agent/ws`; this connector sends
+`job.accepted`, executes Codex locally, and returns `job.result` with safe
+fields for the bridge to store and expose through `codex_read_log`.
 
 ## Implementation Milestones
 

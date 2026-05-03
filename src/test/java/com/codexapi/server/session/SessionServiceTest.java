@@ -1,11 +1,13 @@
 package com.codexapi.server.session;
 
+import com.codexapi.server.config.AgentConfig;
 import com.codexapi.server.config.Config;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -103,7 +105,11 @@ final class SessionServiceTest {
                 600,
                 1800,
                 false,
-                1_000_000
+                1_000_000,
+                AgentConfig.fromEnvironment(Map.of(
+                        "CODEX_AGENT_STATE_FILE", tempDir.resolve("agent-state.json").toString(),
+                        "CODEX_AGENT_WORKING_DIRECTORY", tempDir.toString()
+                ))
         );
     }
 }

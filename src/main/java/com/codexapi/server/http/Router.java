@@ -1,5 +1,10 @@
 package com.codexapi.server.http;
 
+import com.codexapi.server.agent.AgentConnector;
+import com.codexapi.server.agent.AgentConnectorException;
+import com.codexapi.server.agent.AgentConnectorService;
+import com.codexapi.server.agent.AgentConnectorStatus;
+import com.codexapi.server.agent.AgentPairingCodeResponse;
 import com.codexapi.server.config.Config;
 import com.codexapi.server.codex.CodexExecRequest;
 import com.codexapi.server.codex.CodexService;
@@ -23,6 +28,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.time.Duration;
 import java.util.LinkedHashMap;
@@ -38,12 +45,22 @@ public final class Router implements HttpHandler {
     private final GitService gitService;
     private final HistoryService historyService;
     private final CodexService codexService;
+    private final AgentConnector agentConnector;
 
     public Router(Config config) {
         this(config, new ProcessRunner(), new SessionService(config));
     }
 
-    Router(Config config, ProcessRunner processRunner, SessionService sessionService) {
+    public Router(Config config, ProcessRunner processRunner, SessionService sessionService) {
+        this(config, processRunner, sessionService, null);
+    }
+
+    public Router(
+            Config config,
+            ProcessRunner processRunner,
+            SessionService sessionService,
+            AgentConnector agentConnector
+    ) {
         this.config = config;
         this.processRunner = processRunner;
         this.sessionService = sessionService;
@@ -51,6 +68,9 @@ public final class Router implements HttpHandler {
         this.gitService = new GitService(processRunner, Duration.ofSeconds(config.execDefaultTimeoutSeconds()));
         this.historyService = new HistoryService(sessionService.store());
         this.codexService = new CodexService(config, processRunner, sessionService, historyService);
+        this.agentConnector = agentConnector == null
+                ? new AgentConnectorService(config, processRunner, sessionService)
+                : agentConnector;
     }
 
     @Override
@@ -81,6 +101,22 @@ public final class Router implements HttpHandler {
                 }
                 if ("/api/codex/status".equals(path)) {
                     throw methodNotAllowed("GET");
+                }
+
+                if ("GET".equals(method) && "/api/agent/status".equals(path)) {
+                    handleAgentStatus(exchange);
+                    return;
+                }
+                if ("/api/agent/status".equals(path)) {
+                    throw methodNotAllowed("GET");
+                }
+
+                if ("POST".equals(method) && "/api/agent/pairing-code".equals(path)) {
+                    handleAgentPairingCode(exchange);
+                    return;
+                }
+                if ("/api/agent/pairing-code".equals(path)) {
+                    throw methodNotAllowed("POST");
                 }
 
                 if (handleSessionRoute(exchange, method, path)) {
@@ -124,6 +160,13 @@ public final class Router implements HttpHandler {
                     exception.code(),
                     exception.getMessage(),
                     exception.details()
+            );
+        } catch (AgentConnectorException exception) {
+            JsonResponseWriter.writeError(
+                    exchange,
+                    exception.statusCode(),
+                    exception.code(),
+                    exception.getMessage()
             );
         } catch (Exception exception) {
             JsonResponseWriter.writeError(
@@ -285,6 +328,48 @@ public final class Router implements HttpHandler {
     private void handleCodexExec(HttpExchange exchange, Session session) throws IOException {
         CodexExecRequest request = readJsonBody(exchange, CodexExecRequest.class);
         JsonResponseWriter.writeJson(exchange, 200, codexService.execute(session, request));
+    }
+
+    private void handleAgentStatus(HttpExchange exchange) throws IOException {
+        JsonResponseWriter.writeJson(exchange, 200, agentStatusResponse(agentConnector.status()));
+    }
+
+    private void handleAgentPairingCode(HttpExchange exchange) throws IOException {
+        AgentPairingCodeResponse pairingCode = agentConnector.requestPairingCode();
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("ok", true);
+        response.put("pairingCode", pairingCode.pairingCode());
+        response.put("expiresAt", pairingCode.expiresAt());
+        response.put("connectUrl", pairingCode.connectUrl());
+        JsonResponseWriter.writeJson(exchange, 200, response);
+    }
+
+    private Map<String, Object> agentStatusResponse(AgentConnectorStatus status) {
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("ok", true);
+        response.put("enabled", status.enabled());
+        response.put("active", status.active());
+        response.put("connected", status.connected());
+        response.put("status", status.status());
+        response.put("message", status.message());
+        response.put("agentId", status.agentId());
+        response.put("agentType", status.agentType());
+        response.put("displayName", status.displayName());
+        response.put("bridgeBaseUrl", status.bridgeBaseUrl());
+        response.put("relayWebSocketUrl", status.relayWebSocketUrl());
+        response.put("lastSeenAt", status.lastSeenAt());
+        response.put("lastConnectedAt", status.lastConnectedAt());
+        response.put("lastDisconnectedAt", status.lastDisconnectedAt());
+        response.put("pairingCodeExpiresAt", status.pairingCodeExpiresAt());
+        response.put("workingDirectoryConfigured", workingDirectoryConfigured());
+        return response;
+    }
+
+    private boolean workingDirectoryConfigured() {
+        String workingDirectory = config.agent().workingDirectory();
+        return workingDirectory != null
+                && !workingDirectory.isBlank()
+                && Files.isDirectory(Path.of(workingDirectory));
     }
 
     private <T> T readJsonBody(HttpExchange exchange, Class<T> type) throws IOException {

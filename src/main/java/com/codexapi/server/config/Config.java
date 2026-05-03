@@ -12,7 +12,8 @@ public record Config(
         int execDefaultTimeoutSeconds,
         int execMaxTimeoutSeconds,
         boolean allowRemoteBind,
-        int maxRequestBytes
+        int maxRequestBytes,
+        AgentConfig agent
 ) {
     private static final String DEFAULT_HOST = "127.0.0.1";
     private static final int DEFAULT_PORT = 8765;
@@ -28,16 +29,27 @@ public record Config(
     }
 
     static Config fromEnvironment(Map<String, String> env) {
+        int execDefaultTimeoutSeconds = intValue(
+                env,
+                "CODEX_EXEC_DEFAULT_TIMEOUT",
+                DEFAULT_EXEC_DEFAULT_TIMEOUT_SECONDS
+        );
+        int execMaxTimeoutSeconds = intValue(env, "CODEX_EXEC_MAX_TIMEOUT", DEFAULT_EXEC_MAX_TIMEOUT_SECONDS);
+        if (execMaxTimeoutSeconds < 1) {
+            throw new IllegalArgumentException("CODEX_EXEC_MAX_TIMEOUT must be greater than zero");
+        }
+
         Config config = new Config(
                 stringValue(env, "CODEX_API_HOST", DEFAULT_HOST),
                 intValue(env, "CODEX_API_PORT", DEFAULT_PORT),
                 optionalStringValue(env, "CODEX_API_TOKEN"),
                 stringValue(env, "CODEX_CLI_PATH", DEFAULT_CODEX_CLI_PATH),
                 stringValue(env, "CODEX_SESSIONS_FILE", DEFAULT_SESSIONS_FILE),
-                intValue(env, "CODEX_EXEC_DEFAULT_TIMEOUT", DEFAULT_EXEC_DEFAULT_TIMEOUT_SECONDS),
-                intValue(env, "CODEX_EXEC_MAX_TIMEOUT", DEFAULT_EXEC_MAX_TIMEOUT_SECONDS),
+                execDefaultTimeoutSeconds,
+                execMaxTimeoutSeconds,
                 booleanValue(env, "CODEX_ALLOW_REMOTE_BIND", DEFAULT_ALLOW_REMOTE_BIND),
-                intValue(env, "CODEX_MAX_REQUEST_BYTES", DEFAULT_MAX_REQUEST_BYTES)
+                intValue(env, "CODEX_MAX_REQUEST_BYTES", DEFAULT_MAX_REQUEST_BYTES),
+                AgentConfig.fromEnvironment(env, execMaxTimeoutSeconds)
         );
 
         config.validate();

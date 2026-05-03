@@ -1,5 +1,6 @@
 package com.codexapi.server.codex;
 
+import com.codexapi.server.config.AgentConfig;
 import com.codexapi.server.config.Config;
 import com.codexapi.server.history.HistoryService;
 import com.codexapi.server.http.ApiException;
@@ -14,6 +15,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -198,7 +200,11 @@ final class CodexServiceTest {
                 600,
                 1800,
                 false,
-                1_000_000
+                1_000_000,
+                AgentConfig.fromEnvironment(Map.of(
+                        "CODEX_AGENT_STATE_FILE", tempDir.resolve("agent-state.json").toString(),
+                        "CODEX_AGENT_WORKING_DIRECTORY", tempDir.toString()
+                ))
         );
     }
 
