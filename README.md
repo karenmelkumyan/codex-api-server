@@ -229,9 +229,10 @@ ephemeral Codex runs, and returns safe result fields. By default, mutable relay
 jobs use the Codex CLI `workspace-write` sandbox. Set
 `CODEX_AGENT_SANDBOX_MODE=danger-full-access` to run mutable relay jobs with
 full filesystem access; `codex_readonly` remains `read-only`.
-This repository implements the connector-side support; EME Chat pairing UI and
-the full end-to-end product flow still need separate validation with those
-systems.
+This repository implements connector-side relay support. EME Chat now provides
+the server-side connector binding endpoints and browser-facing connector
+state/claim flow; the full end-to-end product flow across deployed EME Chat,
+`eme-codex-bridge`, and a local connector still needs separate validation.
 
 ## Connector Relay Smoke Flow
 
@@ -289,8 +290,8 @@ AGENT_ID="$(printf '%s' "$AGENT_STATUS_JSON" | jq -r '.agentId')"
 `/api/agent/status` should show `active: true` and eventually
 `connected: true`. It never returns `agentSecret`.
 
-4. Claim the pairing code through the bridge. This substitutes for future EME
-Chat pairing UI:
+4. Claim the pairing code through the bridge. This substitutes for the EME Chat
+browser claim flow when manually validating bridge and connector behavior:
 
 ```bash
 export BRIDGE_BASE_URL=http://127.0.0.1:8787

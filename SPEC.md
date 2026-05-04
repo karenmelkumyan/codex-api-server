@@ -26,7 +26,7 @@ Non-interactive Codex execution is implemented for saved sessions. Unknown paths
 return a structured JSON `404`.
 
 Optional connector mode is also implemented for the local side of
-`eme-codex-bridge` relay registration. It is disabled by default, connects
+`eme-codex-bridge` relay registration. It is enabled by default, connects
 outward to the bridge, stores local agent identity state, requests pairing
 codes, maintains an authenticated WebSocket, and executes relay jobs for
 `codex_readonly`, `codex_verify`, and `codex_change`.
@@ -331,8 +331,11 @@ The local `GET /api/agent/status` and `POST /api/agent/pairing-code` endpoints
 are protected by the existing `CODEX_API_TOKEN` authentication. Status responses
 must never include `agentSecret`; the pairing-code endpoint requires existing
 agent state and returns `ok`, `pairingCode`, `expiresAt`, and `connectUrl`.
-This repository implements connector-side support only; EME Chat pairing UI and
-the full end-to-end product flow require separate validation outside this repo.
+This repository implements connector-side relay support. EME Chat owns the
+server-side connector binding endpoints and browser-facing connector state/claim
+flow. The full end-to-end product flow across deployed EME Chat,
+`eme-codex-bridge`, and a local connector requires separate validation outside
+this repo.
 
 When local agent state is ready, the connector starts an outbound WebSocket
 connection to `relayWebSocketUrl` in the background using `X-Agent-Id` and
@@ -373,10 +376,10 @@ final relay result.
 
 ## Connector Relay Manual Smoke Flow
 
-This repository implements connector-side support only. A full product flow
-still requires `eme-codex-bridge`, EME backend credentials, and later EME Chat
-pairing UI. Until that UI exists, an operator can validate bridge relay mode
-manually:
+This repository implements connector-side relay support. A full product flow
+still requires `eme-codex-bridge`, EME backend credentials, deployed EME Chat
+connector state/claim flow, and an EME session. An operator can validate bridge
+relay mode manually without the EME Chat browser flow:
 
 1. Start `../eme-codex-bridge` with MySQL, admin auth, EME credentials,
    `BRIDGE_AGENT_BOOTSTRAP_ENABLED=true`, and `BRIDGE_AGENT_RELAY_ENABLED=true`.
