@@ -62,6 +62,24 @@ final class AgentJobHandlerTest {
     }
 
     @Test
+    void nonzeroCodexExecutionIncludesStderrWhenStdoutIsBlank() throws Exception {
+        AgentJobExecutionResult result = handler(script("""
+                #!/bin/sh
+                cat >/dev/null
+                echo "codex transcript tail" >&2
+                exit 7
+                """)).handleAsync(job("codex_change", 5)).join();
+
+        assertEquals(false, result.ok());
+        assertEquals("failed", result.status());
+        assertEquals(7, result.exitCode());
+        assertTrue(result.message().contains("Codex execution failed."));
+        assertTrue(result.message().contains("codex transcript tail"));
+        assertEquals(true, result.stderrPresent());
+        assertEquals("CODEX_EXEC_FAILED", result.error());
+    }
+
+    @Test
     void timeoutMapsToTimedOutSafeResult() throws Exception {
         AgentJobExecutionResult result = handler(script("""
                 #!/bin/sh
@@ -73,6 +91,22 @@ final class AgentJobHandlerTest {
         assertEquals(true, result.timedOut());
         assertEquals("CODEX_EXEC_TIMED_OUT", result.error());
         assertEquals(false, result.stderrPresent());
+    }
+
+    @Test
+    void timeoutIncludesCapturedStderrWhenPresent() throws Exception {
+        AgentJobExecutionResult result = handler(script("""
+                #!/bin/sh
+                echo "still working on static site" >&2
+                sleep 5
+                """)).handleAsync(job("codex_verify", 1)).join();
+
+        assertEquals(false, result.ok());
+        assertEquals("timed_out", result.status());
+        assertTrue(result.message().contains("Codex execution timed out."));
+        assertTrue(result.message().contains("still working on static site"));
+        assertEquals("CODEX_EXEC_TIMED_OUT", result.error());
+        assertEquals(true, result.stderrPresent());
     }
 
     @Test
@@ -106,7 +140,7 @@ final class AgentJobHandlerTest {
                 #!/bin/sh
                 echo "should not run"
                 """);
-        Config config = config(codex, tempDir.resolve("missing"), 5, 5);
+        Config config = configUnchecked(codex, tempDir.resolve("missing"), 5, 5);
         SessionService sessionService = new SessionService(config);
         AgentJobHandler handler = new AgentJobHandler(
                 config,
@@ -168,6 +202,24 @@ final class AgentJobHandlerTest {
         assertTrue(sessionService.store().find("agent_connector").isPresent());
     }
 
+    @Test
+    void relayJobsAllowNonGitWorkingDirectories() throws Exception {
+        AgentJobExecutionResult result = handler(script("""
+                #!/bin/sh
+                for arg in "$@"; do
+                  if [ "$arg" = "--skip-git-repo-check" ]; then
+                    echo "skip git check enabled"
+                    exit 0
+                  fi
+                done
+                echo "missing skip git check"
+                exit 1
+                """)).handleAsync(job("codex_readonly", 5)).join();
+
+        assertEquals(true, result.ok());
+        assertEquals("skip git check enabled", result.message());
+    }
+
     private AgentJobHandler handler(Path codexCliPath) {
         Config config = config(codexCliPath, tempDir, 5, 5);
         SessionService sessionService = new SessionService(config);
@@ -206,6 +258,36 @@ final class AgentJobHandlerTest {
                         "CODEX_AGENT_WORKING_DIRECTORY", workingDirectory.toString(),
                         "CODEX_AGENT_JOB_MAX_TIMEOUT_SECONDS", String.valueOf(agentMaxTimeout)
                 ), execMaxTimeout)
+        );
+    }
+
+    private Config configUnchecked(Path codexCliPath, Path workingDirectory, int execMaxTimeout, int agentMaxTimeout) {
+        return new Config(
+                "127.0.0.1",
+                8765,
+                Optional.of("dev-token"),
+                codexCliPath.toString(),
+                tempDir.resolve("sessions.json").toString(),
+                5,
+                execMaxTimeout,
+                false,
+                1_000_000,
+                new AgentConfig(
+                        true,
+                        Optional.of("https://emebridge.eagma.com"),
+                        tempDir.resolve("agent.json").toString(),
+                        "Codex Local Agent",
+                        "codex-api-server/0.1.0-SNAPSHOT",
+                        workingDirectory.toString(),
+                        true,
+                        true,
+                        false,
+                        30,
+                        2,
+                        60,
+                        agentMaxTimeout,
+                        "workspace-write"
+                )
         );
     }
 }

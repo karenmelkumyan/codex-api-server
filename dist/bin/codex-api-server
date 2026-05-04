@@ -1,0 +1,94 @@
+#!/usr/bin/env sh
+set -eu
+
+if ! command -v java >/dev/null 2>&1; then
+  echo "ERROR: java is required. Install Java 17 or newer and try again." >&2
+  exit 1
+fi
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+APP_HOME="$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)"
+LAUNCH_DIR="$(pwd)"
+JAR="${APP_HOME}/lib/codex-api-server.jar"
+ENV_FILE="${CODEX_API_ENV_FILE:-${APP_HOME}/.env}"
+
+if [ -f "$ENV_FILE" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$ENV_FILE"
+  set +a
+fi
+
+if [ -z "${CODEX_API_TOKEN:-}" ]; then
+  cat >&2 <<'INFO'
+INFO: CODEX_API_TOKEN is not set. Bridge pairing can still start; protected local /api routes stay unavailable until a token is configured.
+INFO
+fi
+
+export CODEX_AGENT_WORKING_DIRECTORY="${CODEX_AGENT_WORKING_DIRECTORY:-${LAUNCH_DIR}}"
+
+if command -v lsof >/dev/null 2>&1; then
+  API_PORT="${CODEX_API_PORT:-8765}"
+  LISTENER_ROW="$(lsof -nP -iTCP:"$API_PORT" -sTCP:LISTEN 2>/dev/null | awk 'NR==2 {print $1 "|" $2 "|" $9}')"
+  if [ -n "$LISTENER_ROW" ]; then
+    LISTENER_COMMAND="${LISTENER_ROW%%|*}"
+    LISTENER_REST="${LISTENER_ROW#*|}"
+    LISTENER_PID="${LISTENER_REST%%|*}"
+    LISTENER_ADDRESS="${LISTENER_REST#*|}"
+    LISTENER_DETAILS="$(ps -p "$LISTENER_PID" -ww -o command= 2>/dev/null || true)"
+
+    cat >&2 <<INFO
+INFO: codex-api-server found an existing listener on port $API_PORT.
+INFO: Current listener: ${LISTENER_COMMAND} pid=${LISTENER_PID} address=${LISTENER_ADDRESS}
+INFO
+    if [ -n "$LISTENER_DETAILS" ]; then
+      echo "INFO: Command: $LISTENER_DETAILS" >&2
+    fi
+
+    RESTART_EXISTING=false
+    case "${CODEX_API_RESTART_EXISTING:-}" in
+      1|true|TRUE|yes|YES|y|Y) RESTART_EXISTING=true ;;
+    esac
+
+    if [ "$RESTART_EXISTING" != true ]; then
+      if [ -t 0 ]; then
+        printf '%s' 'Press Enter to restart it, or type anything else to cancel: ' >&2
+        IFS= read -r RESTART_CHOICE
+        if [ -n "$RESTART_CHOICE" ]; then
+          echo "INFO: Keeping the existing codex-api-server process." >&2
+          exit 0
+        fi
+      else
+        cat >&2 <<INFO
+INFO: Keeping the existing process. Run again from a terminal to choose restart,
+INFO: or set CODEX_API_RESTART_EXISTING=true to restart non-interactively.
+INFO
+        exit 0
+      fi
+    fi
+
+    echo "INFO: Stopping existing listener pid=${LISTENER_PID}..." >&2
+    if ! kill "$LISTENER_PID" 2>/dev/null; then
+      echo "ERROR: Unable to stop pid=${LISTENER_PID}. Stop it manually and run this launcher again." >&2
+      exit 1
+    fi
+
+    WAIT_SECONDS=10
+    while [ "$WAIT_SECONDS" -gt 0 ]; do
+      if ! lsof -nP -iTCP:"$API_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+        break
+      fi
+      sleep 1
+      WAIT_SECONDS=$((WAIT_SECONDS - 1))
+    done
+
+    if lsof -nP -iTCP:"$API_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+      echo "ERROR: Port $API_PORT is still in use. Stop the existing process manually and run this launcher again." >&2
+      exit 1
+    fi
+    echo "INFO: Existing listener stopped; starting codex-api-server." >&2
+  fi
+fi
+
+cd "$APP_HOME"
+exec java ${JAVA_OPTS:-} -jar "$JAR" "$@"

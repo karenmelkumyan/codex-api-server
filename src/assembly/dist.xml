@@ -1,0 +1,54 @@
+<assembly xmlns="http://maven.apache.org/ASSEMBLY/2.2.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/ASSEMBLY/2.2.0 https://maven.apache.org/xsd/assembly-2.2.0.xsd">
+    <id>dist</id>
+    <formats>
+        <format>zip</format>
+        <format>tar.gz</format>
+    </formats>
+    <includeBaseDirectory>true</includeBaseDirectory>
+    <baseDirectory>${project.artifactId}-${project.version}</baseDirectory>
+
+    <files>
+        <file>
+            <source>${project.build.directory}/${project.build.finalName}.jar</source>
+            <outputDirectory>lib</outputDirectory>
+            <destName>${project.artifactId}.jar</destName>
+        </file>
+        <file>
+            <source>dist/INSTALL.md</source>
+            <outputDirectory>.</outputDirectory>
+            <destName>INSTALL.md</destName>
+        </file>
+        <file>
+            <source>README.md</source>
+            <outputDirectory>.</outputDirectory>
+        </file>
+        <file>
+            <source>SPEC.md</source>
+            <outputDirectory>.</outputDirectory>
+        </file>
+        <file>
+            <source>.env.example</source>
+            <outputDirectory>.</outputDirectory>
+        </file>
+    </files>
+
+    <fileSets>
+        <fileSet>
+            <directory>dist/bin</directory>
+            <outputDirectory>bin</outputDirectory>
+            <fileMode>0755</fileMode>
+        </fileSet>
+        <fileSet>
+            <directory>scripts</directory>
+            <outputDirectory>scripts</outputDirectory>
+            <includes>
+                <include>smoke-test.sh</include>
+                <include>agent-status.sh</include>
+                <include>agent-pairing-code.sh</include>
+            </includes>
+            <fileMode>0755</fileMode>
+        </fileSet>
+    </fileSets>
+</assembly>

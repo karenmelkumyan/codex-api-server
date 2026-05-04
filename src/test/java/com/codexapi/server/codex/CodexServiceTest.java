@@ -83,7 +83,7 @@ final class CodexServiceTest {
     }
 
     @Test
-    void rejectsDangerFullAccessSandbox() {
+    void acceptsDangerFullAccessSandbox() {
         CodexService service = service();
         CodexExecRequest request = new CodexExecRequest(
                 "test",
@@ -96,13 +96,9 @@ final class CodexServiceTest {
                 null
         );
 
-        ApiException exception = assertThrows(
-                ApiException.class,
-                () -> service.buildCommand(session(), request, tempDir.resolve("last-message.txt"))
-        );
+        CodexCommand command = service.buildCommand(session(), request, tempDir.resolve("last-message.txt"));
 
-        assertEquals("VALIDATION_ERROR", exception.code());
-        assertEquals("sandbox", exception.details().get("field"));
+        assertTrue(command.args().contains("danger-full-access"));
     }
 
     @Test

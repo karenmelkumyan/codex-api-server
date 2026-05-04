@@ -53,6 +53,34 @@ final class AgentToolPlannerTest {
     }
 
     @Test
+    void usesConfiguredSandboxForMutableRelayTools() {
+        AgentToolPlanner planner = new AgentToolPlanner(config(120, 90, "danger-full-access"));
+
+        AgentToolExecutionPlan readonly = planner.plan(new AgentRelayJobRequest(
+                "job_1",
+                "codex_readonly",
+                "inspect",
+                30
+        ));
+        AgentToolExecutionPlan verify = planner.plan(new AgentRelayJobRequest(
+                "job_2",
+                "codex_verify",
+                "test",
+                30
+        ));
+        AgentToolExecutionPlan change = planner.plan(new AgentRelayJobRequest(
+                "job_3",
+                "codex_change",
+                "change",
+                30
+        ));
+
+        assertEquals("read-only", readonly.sandbox());
+        assertEquals("danger-full-access", verify.sandbox());
+        assertEquals("danger-full-access", change.sandbox());
+    }
+
+    @Test
     void capsTimeoutByAgentAndExecMax() {
         AgentToolPlanner planner = new AgentToolPlanner(config(120, 90));
 
@@ -108,6 +136,10 @@ final class AgentToolPlannerTest {
     }
 
     private Config config(int execMaxTimeoutSeconds, int agentMaxTimeoutSeconds) {
+        return config(execMaxTimeoutSeconds, agentMaxTimeoutSeconds, "workspace-write");
+    }
+
+    private Config config(int execMaxTimeoutSeconds, int agentMaxTimeoutSeconds, String sandboxMode) {
         return new Config(
                 "127.0.0.1",
                 8765,
@@ -121,7 +153,8 @@ final class AgentToolPlannerTest {
                 AgentConfig.fromEnvironment(Map.of(
                         "CODEX_AGENT_STATE_FILE", tempDir.resolve("agent.json").toString(),
                         "CODEX_AGENT_WORKING_DIRECTORY", tempDir.toString(),
-                        "CODEX_AGENT_JOB_MAX_TIMEOUT_SECONDS", String.valueOf(agentMaxTimeoutSeconds)
+                        "CODEX_AGENT_JOB_MAX_TIMEOUT_SECONDS", String.valueOf(agentMaxTimeoutSeconds),
+                        "CODEX_AGENT_SANDBOX_MODE", sandboxMode
                 ), execMaxTimeoutSeconds)
         );
     }

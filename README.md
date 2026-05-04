@@ -20,7 +20,7 @@ The current implementation intentionally keeps the server local and explicit:
 - Server-side project session management
 - Read-only project inspection endpoints
 - Non-interactive Codex execution for saved sessions
-- Optional outbound connector mode for `eme-codex-bridge`
+- Default-enabled outbound connector mode for `eme-codex-bridge`
 - Local agent bootstrap, state storage, and pairing-code requests
 - Authenticated outbound `/agent/ws` WebSocket with hello, heartbeat, and reconnect
 - Relay execution for `codex_readonly`, `codex_verify`, and `codex_change`
@@ -49,12 +49,43 @@ In another terminal:
 CODEX_API_TOKEN=dev-token ./scripts/smoke-test.sh
 ```
 
+The connector is enabled by default and uses
+`https://emebridge.eagma.com`. Set `CODEX_AGENT_ENABLED=false` only when
+you want to run the local HTTP API without the outbound bridge connector.
+
 ## Build
 
 ```bash
 mvn -q test
 mvn -q -DskipTests package
 ```
+
+The packaged build also creates downloadable distribution archives:
+
+```text
+target/codex-api-server-0.1.0-SNAPSHOT-dist.zip
+target/codex-api-server-0.1.0-SNAPSHOT-dist.tar.gz
+```
+
+Each archive includes the runnable shaded JAR, `bin/` launchers, `.env.example`,
+the smoke-test helper, and `INSTALL.md`. Users can extract the archive, change
+to the project directory Codex should work on, and run:
+
+```bash
+/path/to/codex-api-server-0.1.0-SNAPSHOT/bin/codex-api-server
+```
+
+No configuration file is required for the default EME bridge connection. Create
+`.env` from `.env.example` only when you want to set a local API token or
+override defaults. The bundle stores its own state under the extracted
+distribution directory, while the default Codex working directory is the
+directory where the launcher is invoked.
+
+If the configured port is already in use, the packaged launcher shows the
+existing listener and asks whether to restart it. Press Enter to stop the
+existing listener and start again, or type anything else to keep the current
+process. For scripts, set `CODEX_API_RESTART_EXISTING=true` to restart without
+an interactive prompt.
 
 ## Run For Development
 
@@ -68,13 +99,13 @@ By default, the server listens on:
 http://127.0.0.1:8765
 ```
 
-To run with outbound connector mode enabled:
+To run with the default EME bridge connector diagnostics:
 
 ```bash
-CODEX_API_TOKEN=dev-token \
-CODEX_AGENT_BRIDGE_BASE_URL=http://127.0.0.1:8787 \
-./scripts/run-agent-dev.sh
+CODEX_API_TOKEN=dev-token ./scripts/run-agent-dev.sh
 ```
+
+For local bridge development, override `CODEX_AGENT_BRIDGE_BASE_URL`.
 
 ## Run Packaged Jar
 
@@ -87,8 +118,10 @@ mvn -q -DskipTests package
 Run it:
 
 ```bash
-CODEX_API_TOKEN=dev-token java -jar target/codex-api-server-0.1.0-SNAPSHOT.jar
+java -jar target/codex-api-server-0.1.0-SNAPSHOT.jar
 ```
+
+Set `CODEX_API_TOKEN` when you need protected local `/api/*` routes.
 
 ## Smoke Test
 
@@ -148,46 +181,54 @@ Configuration is read from environment variables.
 | --- | --- | --- |
 | `CODEX_API_HOST` | `127.0.0.1` | Host address for the HTTP server. |
 | `CODEX_API_PORT` | `8765` | Port for the HTTP server. |
-| `CODEX_API_TOKEN` | unset | Bearer token for protected `/api/*` routes. |
+| `CODEX_API_RESTART_EXISTING` | `false` | Packaged launcher option. When the configured port is already in use, `true` stops the existing listener and starts a new server without prompting. |
+| `CODEX_API_TOKEN` | unset | Optional bearer token for protected `/api/*` routes. When unset, protected local API routes return `AUTH_TOKEN_NOT_CONFIGURED`. |
 | `CODEX_CLI_PATH` | `codex` | Path or command name for the Codex CLI status check. |
 | `CODEX_SESSIONS_FILE` | `./data/sessions.json` | Session storage file path. |
 | `CODEX_EXEC_DEFAULT_TIMEOUT` | `600` | Default execution timeout in seconds. |
 | `CODEX_EXEC_MAX_TIMEOUT` | `1800` | Maximum execution timeout in seconds. |
 | `CODEX_ALLOW_REMOTE_BIND` | `false` | Allows binding to non-local hosts when set to `true`. |
 | `CODEX_MAX_REQUEST_BYTES` | `1000000` | Maximum JSON request body size for POST endpoints. |
-| `CODEX_AGENT_ENABLED` | `false` | Enables the optional outbound local-agent connector foundation. |
-| `CODEX_AGENT_BRIDGE_BASE_URL` | unset | Bridge base URL for connector bootstrap, pairing, status, and WebSocket paths. |
-| `CODEX_AGENT_STATE_FILE` | `./data/agent.json` | Local connector identity storage file. |
+| `CODEX_AGENT_ENABLED` | `true` | Enables the outbound local-agent connector. Set to `false` to run without bridge pairing. |
+| `CODEX_AGENT_BRIDGE_BASE_URL` | `https://emebridge.eagma.com` | Bridge base URL for connector bootstrap, pairing, status, and WebSocket paths. |
+| `CODEX_AGENT_STATE_FILE` | `~/.codex/eme-codex-agent/agent.json` | Local connector identity storage file. |
 | `CODEX_AGENT_DISPLAY_NAME` | `Codex Local Agent` | Human-readable connector display name sent to the bridge. |
 | `CODEX_AGENT_CLIENT_VERSION` | `codex-api-server/0.1.0-SNAPSHOT` | Connector client version sent to the bridge. |
 | `CODEX_AGENT_WORKING_DIRECTORY` | `.` | Local repository root for relay job execution, stored as a normalized absolute path. |
 | `CODEX_AGENT_AUTO_BOOTSTRAP` | `true` | Allows the connector to bootstrap a local agent identity when no state exists. |
 | `CODEX_AGENT_AUTO_PAIR_ON_FIRST_BOOTSTRAP` | `true` | Allows first bootstrap to request and show a pairing code. |
-| `CODEX_AGENT_PAIR_ON_START` | `false` | Requests a fresh pairing code on each connector start when enabled. |
+| `CODEX_AGENT_PAIR_ON_START` | `true` | Requests and prints a fresh pairing code on each connector start. |
 | `CODEX_AGENT_HEARTBEAT_INTERVAL_SECONDS` | `30` | Connector WebSocket heartbeat interval. |
 | `CODEX_AGENT_RECONNECT_INITIAL_SECONDS` | `2` | Initial reconnect delay for bridge connection attempts. |
 | `CODEX_AGENT_RECONNECT_MAX_SECONDS` | `60` | Maximum reconnect delay for bridge connection attempts. |
 | `CODEX_AGENT_JOB_MAX_TIMEOUT_SECONDS` | `CODEX_EXEC_MAX_TIMEOUT` | Maximum relay job timeout accepted by the connector. |
+| `CODEX_AGENT_SANDBOX_MODE` | `workspace-write` | Sandbox used for `codex_verify` and `codex_change` relay jobs. Set to `danger-full-access` only when you trust the task and want Codex CLI to run without filesystem sandboxing. |
 
 Remote binding is disabled by default. If `CODEX_API_HOST` is set to a non-local
 address, `CODEX_ALLOW_REMOTE_BIND=true` must also be set.
 
-Connector mode is also disabled by default and is outbound-only. If
-`CODEX_AGENT_ENABLED=true` is set without `CODEX_AGENT_BRIDGE_BASE_URL`, the
-HTTP server can still start and the connector remains inactive until a bridge
-URL is configured. The local agent state file stores `agentSecret`; it is written
-with owner-only permissions where the filesystem supports POSIX permissions.
+Connector mode is enabled by default and is outbound-only. It uses
+`https://emebridge.eagma.com` unless `CODEX_AGENT_BRIDGE_BASE_URL` is
+overridden. The HTTP server can still start if bridge bootstrap or connection
+fails; the connector reports the startup error through `/api/agent/status` when
+a local API token is configured. The local agent state file stores
+`agentSecret`; it is written with owner-only permissions where the filesystem
+supports POSIX permissions.
 The connector capability payload reports Codex CLI availability and supported
 relay tool modes without sending the full working directory path.
 When active, connector startup loads existing local identity state, bootstraps
 only when state is missing and auto-bootstrap is enabled, and prints pairing
-code details without printing the stored agent secret.
+code details without printing the stored agent secret. By default, startup also
+prints a fresh pairing code when an existing identity is loaded, so restarting
+the launcher is enough to get a new code.
 Once state is ready, the connector starts the outbound WebSocket in the
 background, sends `agent.hello`, keeps heartbeat diagnostics, and currently
 accepts relay jobs for `codex_readonly`, `codex_verify`, and `codex_change`.
 Relay execution is single-job-at-a-time, uses `approvalPolicy=never` and
-ephemeral Codex runs, and returns safe result fields without raw stderr or
-command-line details.
+ephemeral Codex runs, and returns safe result fields. By default, mutable relay
+jobs use the Codex CLI `workspace-write` sandbox. Set
+`CODEX_AGENT_SANDBOX_MODE=danger-full-access` to run mutable relay jobs with
+full filesystem access; `codex_readonly` remains `read-only`.
 This repository implements the connector-side support; EME Chat pairing UI and
 the full end-to-end product flow still need separate validation with those
 systems.
@@ -223,7 +264,7 @@ export CODEX_API_TOKEN=dev-token
 export CODEX_AGENT_ENABLED=true
 export CODEX_AGENT_BRIDGE_BASE_URL=http://127.0.0.1:8787
 export CODEX_AGENT_WORKING_DIRECTORY="$(pwd)"
-export CODEX_AGENT_STATE_FILE=./data/agent.json
+export CODEX_AGENT_STATE_FILE="$HOME/.codex/eme-codex-agent/dev-agent.json"
 ./scripts/run-agent-dev.sh
 ```
 

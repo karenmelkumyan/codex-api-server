@@ -82,7 +82,22 @@ final class AgentConnectorServiceTest {
     void enabledWithoutBridgeUrlReportsInactiveWithoutState() {
         ByteArrayOutputStream output = output();
         AgentConnectorService service = new AgentConnectorService(
-                config(Map.of("CODEX_AGENT_ENABLED", "true")),
+                config(new AgentConfig(
+                        true,
+                        Optional.empty(),
+                        tempDir.resolve("unused-agent.json").toString(),
+                        "Dev Laptop",
+                        "codex-api-server/0.1.0-SNAPSHOT",
+                        tempDir.toAbsolutePath().normalize().toString(),
+                        true,
+                        true,
+                        false,
+                        30,
+                        2,
+                        60,
+                        1800,
+                        "workspace-write"
+                )),
                 () -> {
                     throw new AssertionError("state store should not be loaded");
                 },
@@ -114,7 +129,8 @@ final class AgentConnectorServiceTest {
                         "CODEX_AGENT_ENABLED", "true",
                         "CODEX_AGENT_BRIDGE_BASE_URL", baseUrl(),
                         "CODEX_AGENT_STATE_FILE", stateFile.toString(),
-                        "CODEX_AGENT_AUTO_PAIR_ON_FIRST_BOOTSTRAP", "false"
+                        "CODEX_AGENT_AUTO_PAIR_ON_FIRST_BOOTSTRAP", "false",
+                        "CODEX_AGENT_PAIR_ON_START", "false"
                 )),
                 output()
         ).start();
@@ -352,6 +368,10 @@ final class AgentConnectorServiceTest {
         env.put("CODEX_AGENT_WORKING_DIRECTORY", tempDir.toString());
         env.putAll(overrides);
 
+        return config(AgentConfig.fromEnvironment(env, 1800));
+    }
+
+    private Config config(AgentConfig agentConfig) {
         return new Config(
                 "127.0.0.1",
                 8765,
@@ -362,7 +382,7 @@ final class AgentConnectorServiceTest {
                 1800,
                 false,
                 1_000_000,
-                AgentConfig.fromEnvironment(env, 1800)
+                agentConfig
         );
     }
 

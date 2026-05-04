@@ -5,6 +5,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -21,10 +22,15 @@ final class ConfigTest {
 
         assertEquals("127.0.0.1", config.host());
         assertEquals(1_000_000, config.maxRequestBytes());
-        assertFalse(config.agent().enabled());
-        assertFalse(config.agent().active());
-        assertEquals("./data/agent.json", config.agent().stateFile());
-        assertEquals("Connector mode is disabled.", config.agent().inactiveReason().orElseThrow());
+        assertTrue(config.agent().enabled());
+        assertTrue(config.agent().active());
+        assertEquals("https://emebridge.eagma.com", config.agent().bridgeBaseUrl().orElseThrow());
+        assertTrue(config.agent().pairOnStart());
+        assertEquals(
+                Path.of(System.getProperty("user.home"), ".codex", "eme-codex-agent", "agent.json").toString(),
+                config.agent().stateFile()
+        );
+        assertTrue(config.agent().inactiveReason().isEmpty());
     }
 
     @Test
@@ -71,15 +77,38 @@ final class ConfigTest {
     }
 
     @Test
-    void agentCanBeEnabledWithoutBridgeUrl() {
-        Config config = Config.fromEnvironment(Map.of("CODEX_AGENT_ENABLED", "true"));
+    void agentCanBeDisabledDespiteDefaultBridgeUrl() {
+        Config config = Config.fromEnvironment(Map.of("CODEX_AGENT_ENABLED", "false"));
 
-        assertTrue(config.agent().enabled());
+        assertFalse(config.agent().enabled());
         assertFalse(config.agent().active());
         assertEquals(
-                "CODEX_AGENT_BRIDGE_BASE_URL is not configured.",
+                "Connector mode is disabled.",
                 config.agent().inactiveReason().orElseThrow()
         );
+    }
+
+    @Test
+    void agentWithoutBridgeUrlReportsInactive() {
+        AgentConfig config = new AgentConfig(
+                true,
+                Optional.empty(),
+                "./data/agent.json",
+                "Codex Local Agent",
+                "codex-api-server/0.1.0-SNAPSHOT",
+                tempDir.toAbsolutePath().normalize().toString(),
+                true,
+                true,
+                false,
+                30,
+                2,
+                60,
+                1800,
+                "workspace-write"
+        );
+
+        assertFalse(config.active());
+        assertEquals("CODEX_AGENT_BRIDGE_BASE_URL is not configured.", config.inactiveReason().orElseThrow());
     }
 
     @Test
@@ -97,7 +126,8 @@ final class ConfigTest {
                 Map.entry("CODEX_AGENT_HEARTBEAT_INTERVAL_SECONDS", "15"),
                 Map.entry("CODEX_AGENT_RECONNECT_INITIAL_SECONDS", "3"),
                 Map.entry("CODEX_AGENT_RECONNECT_MAX_SECONDS", "45"),
-                Map.entry("CODEX_AGENT_JOB_MAX_TIMEOUT_SECONDS", "900")
+                Map.entry("CODEX_AGENT_JOB_MAX_TIMEOUT_SECONDS", "900"),
+                Map.entry("CODEX_AGENT_SANDBOX_MODE", "danger-full-access")
         ));
 
         AgentConfig agent = config.agent();
@@ -115,7 +145,21 @@ final class ConfigTest {
         assertEquals(3, agent.reconnectInitialSeconds());
         assertEquals(45, agent.reconnectMaxSeconds());
         assertEquals(900, agent.jobMaxTimeoutSeconds());
+        assertEquals("danger-full-access", agent.sandboxMode());
         assertTrue(agent.inactiveReason().isEmpty());
+    }
+
+    @Test
+    void rejectsInvalidAgentSandboxMode() {
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> Config.fromEnvironment(Map.of("CODEX_AGENT_SANDBOX_MODE", "read-only"))
+        );
+
+        assertEquals(
+                "CODEX_AGENT_SANDBOX_MODE must be one of: workspace-write, danger-full-access",
+                exception.getMessage()
+        );
     }
 
     @Test
@@ -172,7 +216,7 @@ final class ConfigTest {
     @Test
     void inactiveAgentAllowsMissingWorkingDirectory() {
         Config config = Config.fromEnvironment(Map.of(
-                "CODEX_AGENT_ENABLED", "true",
+                "CODEX_AGENT_ENABLED", "false",
                 "CODEX_AGENT_WORKING_DIRECTORY", tempDir.resolve("missing").toString()
         ));
 

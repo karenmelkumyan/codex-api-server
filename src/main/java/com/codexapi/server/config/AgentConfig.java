@@ -19,19 +19,22 @@ public record AgentConfig(
         int heartbeatIntervalSeconds,
         int reconnectInitialSeconds,
         int reconnectMaxSeconds,
-        int jobMaxTimeoutSeconds
+        int jobMaxTimeoutSeconds,
+        String sandboxMode
 ) {
-    private static final boolean DEFAULT_ENABLED = false;
-    private static final String DEFAULT_STATE_FILE = "./data/agent.json";
+    private static final boolean DEFAULT_ENABLED = true;
+    private static final String DEFAULT_BRIDGE_BASE_URL = "https://emebridge.eagma.com";
+    private static final String DEFAULT_STATE_FILE = defaultStateFile();
     private static final String DEFAULT_DISPLAY_NAME = "Codex Local Agent";
     private static final String DEFAULT_CLIENT_VERSION = "codex-api-server/0.1.0-SNAPSHOT";
     private static final String DEFAULT_WORKING_DIRECTORY = ".";
     private static final boolean DEFAULT_AUTO_BOOTSTRAP = true;
     private static final boolean DEFAULT_AUTO_PAIR_ON_FIRST_BOOTSTRAP = true;
-    private static final boolean DEFAULT_PAIR_ON_START = false;
+    private static final boolean DEFAULT_PAIR_ON_START = true;
     private static final int DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 30;
     private static final int DEFAULT_RECONNECT_INITIAL_SECONDS = 2;
     private static final int DEFAULT_RECONNECT_MAX_SECONDS = 60;
+    private static final String DEFAULT_SANDBOX_MODE = "workspace-write";
 
     public static AgentConfig fromEnvironment(Map<String, String> env) {
         return fromEnvironment(env, intValue(env, "CODEX_EXEC_MAX_TIMEOUT", 1800));
@@ -40,7 +43,7 @@ public record AgentConfig(
     public static AgentConfig fromEnvironment(Map<String, String> env, int execMaxTimeoutSeconds) {
         AgentConfig config = new AgentConfig(
                 booleanValue(env, "CODEX_AGENT_ENABLED", DEFAULT_ENABLED),
-                optionalNormalizedUrl(env, "CODEX_AGENT_BRIDGE_BASE_URL"),
+                optionalNormalizedUrl(env, "CODEX_AGENT_BRIDGE_BASE_URL", DEFAULT_BRIDGE_BASE_URL),
                 stringValue(env, "CODEX_AGENT_STATE_FILE", DEFAULT_STATE_FILE),
                 stringValue(env, "CODEX_AGENT_DISPLAY_NAME", DEFAULT_DISPLAY_NAME),
                 stringValue(env, "CODEX_AGENT_CLIENT_VERSION", DEFAULT_CLIENT_VERSION),
@@ -51,7 +54,8 @@ public record AgentConfig(
                 intValue(env, "CODEX_AGENT_HEARTBEAT_INTERVAL_SECONDS", DEFAULT_HEARTBEAT_INTERVAL_SECONDS),
                 intValue(env, "CODEX_AGENT_RECONNECT_INITIAL_SECONDS", DEFAULT_RECONNECT_INITIAL_SECONDS),
                 intValue(env, "CODEX_AGENT_RECONNECT_MAX_SECONDS", DEFAULT_RECONNECT_MAX_SECONDS),
-                intValue(env, "CODEX_AGENT_JOB_MAX_TIMEOUT_SECONDS", execMaxTimeoutSeconds)
+                intValue(env, "CODEX_AGENT_JOB_MAX_TIMEOUT_SECONDS", execMaxTimeoutSeconds),
+                stringValue(env, "CODEX_AGENT_SANDBOX_MODE", DEFAULT_SANDBOX_MODE)
         );
 
         config.validate();
@@ -102,6 +106,11 @@ public record AgentConfig(
         if (jobMaxTimeoutSeconds < 1) {
             throw new IllegalArgumentException("CODEX_AGENT_JOB_MAX_TIMEOUT_SECONDS must be greater than zero");
         }
+        if (!"workspace-write".equals(sandboxMode) && !"danger-full-access".equals(sandboxMode)) {
+            throw new IllegalArgumentException(
+                    "CODEX_AGENT_SANDBOX_MODE must be one of: workspace-write, danger-full-access"
+            );
+        }
         if (active() && !Files.isDirectory(Path.of(workingDirectory))) {
             throw new IllegalArgumentException(
                     "CODEX_AGENT_WORKING_DIRECTORY must exist and be a directory when connector mode is active"
@@ -113,6 +122,15 @@ public record AgentConfig(
         return Path.of(value).toAbsolutePath().normalize().toString();
     }
 
+    private static String defaultStateFile() {
+        return Path.of(
+                System.getProperty("user.home"),
+                ".codex",
+                "eme-codex-agent",
+                "agent.json"
+        ).toString();
+    }
+
     private static String stringValue(Map<String, String> env, String name, String defaultValue) {
         String value = env.get(name);
         if (value == null || value.isBlank()) {
@@ -121,13 +139,13 @@ public record AgentConfig(
         return value.trim();
     }
 
-    private static Optional<String> optionalNormalizedUrl(Map<String, String> env, String name) {
+    private static Optional<String> optionalNormalizedUrl(Map<String, String> env, String name, String defaultValue) {
         String value = env.get(name);
-        if (value == null || value.isBlank()) {
+        String trimmed = value == null || value.isBlank() ? defaultValue : value.trim();
+        if (trimmed == null || trimmed.isBlank()) {
             return Optional.empty();
         }
 
-        String trimmed = value.trim();
         URI uri;
         try {
             uri = URI.create(trimmed);

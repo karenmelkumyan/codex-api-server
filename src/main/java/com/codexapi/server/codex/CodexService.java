@@ -24,7 +24,7 @@ import java.util.Set;
 import java.util.UUID;
 
 public final class CodexService {
-    private static final Set<String> ALLOWED_SANDBOXES = Set.of("read-only", "workspace-write");
+    private static final Set<String> ALLOWED_SANDBOXES = Set.of("read-only", "workspace-write", "danger-full-access");
     private static final Set<String> ALLOWED_APPROVAL_POLICIES = Set.of("untrusted", "on-request", "never");
     private static final int OUTPUT_PREVIEW_LENGTH = 500;
     private static final String TRUNCATION_MARKER = "...[truncated]";

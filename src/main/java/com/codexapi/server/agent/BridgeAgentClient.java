@@ -133,7 +133,10 @@ public final class BridgeAgentClient {
             Thread.currentThread().interrupt();
             throw new BridgeAgentClientException("Bridge request " + method + " " + path + " was interrupted.", exception);
         } catch (IOException exception) {
-            throw new BridgeAgentClientException("Bridge request " + method + " " + path + " failed.", exception);
+            throw new BridgeAgentClientException(
+                    "Bridge request " + method + " " + path + " failed: " + safeExceptionMessage(exception),
+                    exception
+            );
         }
 
         int statusCode = response.statusCode();
@@ -176,6 +179,16 @@ public final class BridgeAgentClient {
             return sanitized.substring(0, ERROR_BODY_LIMIT) + "...[truncated]";
         }
         return sanitized;
+    }
+
+    private static String safeExceptionMessage(Exception exception) {
+        String message = exception.getMessage();
+        if (message == null || message.isBlank()) {
+            return exception.getClass().getSimpleName();
+        }
+        return message
+                .replace("\r", " ")
+                .replace("\n", " ");
     }
 
     private static String trimTrailingSlash(String value) {
