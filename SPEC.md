@@ -350,9 +350,11 @@ exponential backoff capped by configuration.
 Incoming `job.request` messages are accepted immediately, then dispatched to a
 single local relay job executor. The connector supports `codex_readonly`,
 `codex_verify`, and `codex_change`, caps requested timeouts by both connector
-and Codex execution maximums, and returns safe `job.result` fields without raw
-stderr, command-line details, or secrets. Unsupported tools, including
-`codex_read_log`, return `UNSUPPORTED_TOOL` after `job.accepted`.
+and Codex execution maximums, sends bounded `job.progress` messages when local
+execution starts and as a periodic heartbeat while Codex is running, and returns
+safe `job.result` fields without raw stderr, command-line details, or secrets.
+Unsupported tools, including `codex_read_log`, return `UNSUPPORTED_TOOL` after
+`job.accepted`.
 
 Relay jobs reuse the same internal execution path as the local Codex execution
 endpoint. The connector shares the process runner and session service used by
@@ -402,8 +404,9 @@ relay mode manually without the EME Chat browser flow:
    `POST /tools/{bridgeKey}/codex_read_log`.
 
 The bridge dispatches `job.request` over `/agent/ws`; this connector sends
-`job.accepted`, executes Codex locally, and returns `job.result` with safe
-fields for the bridge to store and expose through `codex_read_log`.
+`job.accepted`, sends generic `job.progress` start/heartbeat events, executes
+Codex locally, and returns `job.result` with safe fields for the bridge to store
+and expose through `codex_read_log`.
 
 ## Implementation Milestones
 

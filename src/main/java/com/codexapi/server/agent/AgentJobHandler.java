@@ -25,7 +25,6 @@ public class AgentJobHandler {
 
     private static final String RELAY_SESSION_ID = "agent_connector";
     private static final String RELAY_SESSION_NAME = "Codex Agent Connector";
-    private static final int FAILURE_DETAIL_LIMIT = 4000;
 
     private final Config config;
     private final SessionService sessionService;
@@ -153,7 +152,7 @@ public class AgentJobHandler {
         if ("PROCESS_TIMEOUT".equals(exception.code())) {
             return AgentJobExecutionResult.timedOut(
                     jobId,
-                    messageWithDetails("Codex execution timed out.", detailText(exception, "stderr")),
+                    "Codex execution timed out.",
                     detailTextPresent(exception, "stderr")
             );
         }
@@ -188,11 +187,6 @@ public class AgentJobHandler {
         return value instanceof String text && !text.isBlank();
     }
 
-    private String detailText(ApiException exception, String key) {
-        Object value = exception.details().get(key);
-        return value instanceof String text ? text : "";
-    }
-
     private String executionMessage(CodexExecResponse response) {
         String stdout = trimToNull(response.stdout());
         if (stdout != null) {
@@ -201,22 +195,7 @@ public class AgentJobHandler {
         if (response.exitCode() == null || response.exitCode() == 0) {
             return "Codex execution completed.";
         }
-        return messageWithDetails("Codex execution failed.", response.stderr());
-    }
-
-    private String messageWithDetails(String summary, String details) {
-        String trimmedDetails = trimToNull(details);
-        if (trimmedDetails == null) {
-            return summary;
-        }
-        return summary + "\n\nCodex CLI output:\n" + tail(trimmedDetails, FAILURE_DETAIL_LIMIT);
-    }
-
-    private String tail(String value, int maxLength) {
-        if (value.length() <= maxLength) {
-            return value;
-        }
-        return "...[truncated]\n" + value.substring(value.length() - maxLength);
+        return "Codex execution failed.";
     }
 
     private String trimToNull(String value) {

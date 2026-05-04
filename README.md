@@ -225,8 +225,9 @@ Once state is ready, the connector starts the outbound WebSocket in the
 background, sends `agent.hello`, keeps heartbeat diagnostics, and currently
 accepts relay jobs for `codex_readonly`, `codex_verify`, and `codex_change`.
 Relay execution is single-job-at-a-time, uses `approvalPolicy=never` and
-ephemeral Codex runs, and returns safe result fields. By default, mutable relay
-jobs use the Codex CLI `workspace-write` sandbox. Set
+ephemeral Codex runs, sends bounded `job.progress` start/heartbeat messages
+while Codex is running, and returns safe result fields. By default, mutable
+relay jobs use the Codex CLI `workspace-write` sandbox. Set
 `CODEX_AGENT_SANDBOX_MODE=danger-full-access` to run mutable relay jobs with
 full filesystem access; `codex_readonly` remains `read-only`.
 This repository implements connector-side relay support. EME Chat now provides
@@ -363,8 +364,9 @@ curl -sS -X POST "${BRIDGE_BASE_URL%/}/tools/${BRIDGE_KEY}/codex_read_log" \
 ```
 
 The bridge dispatches `job.request` over the connector WebSocket. The connector
-sends `job.accepted`, executes Codex locally, and sends `job.result`; the bridge
-stores the safe response for `codex_read_log`.
+sends `job.accepted`, sends `job.progress` when execution starts and as a
+periodic heartbeat, executes Codex locally, and sends `job.result`; the bridge
+stores safe progress events and the safe response for `codex_read_log`.
 
 ## Relay Execution Internals
 
@@ -379,7 +381,7 @@ and may appear in `/api/sessions`. Because execution goes through
 `CodexService`, relay jobs write the same metadata-only execution history as
 normal `POST /api/sessions/{sessionId}/codex/exec` calls: prompt text is
 omitted, stdout/stderr previews are bounded, and the session `lastUsedAt` value
-is updated.
+is updated. Progress heartbeats are generic and do not stream stdout or stderr.
 
 If the WebSocket disconnects while Codex is still running, V1 lets the local
 Codex process continue. When the process completes, the connector attempts to

@@ -26,6 +26,8 @@ import java.util.function.Supplier;
 
 public final class AgentWebSocketClient {
     private static final String AGENT_ID_HEADER = "X-Agent-Id";
+    private static final String PROGRESS_STARTED_MESSAGE = "Codex execution started.";
+    private static final String HEARTBEAT_MESSAGE = "Codex is still running.";
 
     private final AgentConfig config;
     private final AgentStateStore stateStore;
@@ -238,7 +240,15 @@ public final class AgentWebSocketClient {
         accepted.put("jobId", jobId);
         sendJson(webSocket, accepted);
 
+        sendJobProgress(webSocket, jobId, "progress", PROGRESS_STARTED_MESSAGE);
+        Cancellable jobHeartbeat = scheduler.scheduleAtFixedRate(
+                () -> sendJobProgress(webSocket, jobId, "heartbeat", HEARTBEAT_MESSAGE),
+                Duration.ofSeconds(config.heartbeatIntervalSeconds()),
+                Duration.ofSeconds(config.heartbeatIntervalSeconds())
+        );
+
         jobHandler.handleAsync(request).whenComplete((result, exception) -> {
+            jobHeartbeat.cancel();
             if (exception != null) {
                 sendJobResult(webSocket, AgentJobExecutionResult.failed(
                         jobId,
@@ -251,6 +261,16 @@ public final class AgentWebSocketClient {
             }
             sendJobResult(webSocket, result);
         });
+    }
+
+    private void sendJobProgress(WebSocket webSocket, String jobId, String eventType, String message) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("type", "job.progress");
+        payload.put("jobId", jobId);
+        payload.put("eventType", eventType);
+        payload.put("message", message);
+        payload.put("details", Map.of());
+        sendJson(webSocket, payload);
     }
 
     private void sendJobResult(WebSocket webSocket, AgentJobExecutionResult executionResult) {

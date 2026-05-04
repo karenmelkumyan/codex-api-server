@@ -99,6 +99,24 @@ final class AgentWebSocketClientTest {
     }
 
     @Test
+    void incomingJobProgressMessageIsIgnoredSafely() {
+        Fixture fixture = fixture();
+        fixture.startAndOpen();
+        int sentBefore = fixture.webSocket().sentTexts().size();
+
+        fixture.receive("""
+                {
+                  "type": "job.progress",
+                  "jobId": "job_1",
+                  "eventType": "progress",
+                  "message": "unexpected inbound progress"
+                }
+                """);
+
+        assertEquals(sentBefore, fixture.webSocket().sentTexts().size());
+    }
+
+    @Test
     void closeTriggersReconnectBackoffAndCancelsHeartbeat() {
         Fixture fixture = fixture();
         fixture.startAndOpen();
@@ -148,18 +166,58 @@ final class AgentWebSocketClientTest {
                 """);
 
         List<String> sentTexts = fixture.webSocket().sentTexts();
-        JsonNode accepted = json(sentTexts.get(sentTexts.size() - 2));
+        JsonNode accepted = json(sentTexts.get(sentTexts.size() - 3));
+        JsonNode progress = json(sentTexts.get(sentTexts.size() - 2));
         JsonNode result = json(sentTexts.get(sentTexts.size() - 1));
 
         assertTrue(fixture.jobHandler().acceptedWasSentBeforeStart());
         assertEquals("job.accepted", accepted.get("type").asText());
         assertEquals("job_1", accepted.get("jobId").asText());
+        assertEquals("job.progress", progress.get("type").asText());
+        assertEquals("job_1", progress.get("jobId").asText());
+        assertEquals("progress", progress.get("eventType").asText());
+        assertEquals("Codex execution started.", progress.get("message").asText());
+        assertTrue(progress.get("details").isObject());
+        assertFalse(progress.toString().contains("super-secret"));
         assertEquals("job.result", result.get("type").asText());
         assertEquals("job_1", result.get("jobId").asText());
         assertEquals(true, result.get("ok").asBoolean());
         assertEquals("completed", result.get("status").asText());
         assertEquals(false, result.get("stderrPresent").asBoolean());
         assertTrue(result.get("error").isNull());
+    }
+
+    @Test
+    void runningJobSendsHeartbeatProgressUntilResultCompletes() {
+        Fixture fixture = pendingFixture();
+        fixture.startAndOpen();
+
+        fixture.receive("""
+                {
+                  "type": "job.request",
+                  "jobId": "job_1",
+                  "tool": "codex_change",
+                  "message": "make it so",
+                  "timeoutSeconds": 30
+                }
+                """);
+        FakeScheduler.ScheduledTask progressHeartbeat = fixture.scheduler().latestPeriodic();
+
+        fixture.scheduler().runNextPeriodic();
+
+        JsonNode heartbeat = json(fixture.webSocket().lastText());
+        assertEquals("job.progress", heartbeat.get("type").asText());
+        assertEquals("heartbeat", heartbeat.get("eventType").asText());
+        assertEquals("Codex is still running.", heartbeat.get("message").asText());
+        assertTrue(heartbeat.get("details").isObject());
+        assertFalse(heartbeat.toString().contains("super-secret"));
+
+        fixture.jobHandler().complete(AgentJobExecutionResult.completed("job_1", "done", 0, false));
+
+        JsonNode result = json(fixture.webSocket().lastText());
+        assertTrue(progressHeartbeat.cancelled());
+        assertEquals("job.result", result.get("type").asText());
+        assertEquals("completed", result.get("status").asText());
     }
 
     @Test
@@ -194,13 +252,22 @@ final class AgentWebSocketClientTest {
         return fixture(null);
     }
 
+    private Fixture pendingFixture() {
+        return fixture(null, true);
+    }
+
     private Fixture fixture(AgentJobExecutionResult jobResult) {
+        return fixture(jobResult, false);
+    }
+
+    private Fixture fixture(AgentJobExecutionResult jobResult, boolean pendingJob) {
         FakeDialer dialer = new FakeDialer();
         FakeScheduler scheduler = new FakeScheduler();
         FakeStatusListener status = new FakeStatusListener();
         FakeJobHandler jobHandler = new FakeJobHandler(
                 () -> dialer.lastWebSocket().sentTexts().size(),
-                jobResult
+                jobResult,
+                pendingJob
         );
         AgentStateStore stateStore = new AgentStateStore(tempDir.resolve("agent.json").toString());
         AgentState state = state();
@@ -419,16 +486,22 @@ final class AgentWebSocketClientTest {
     private static final class FakeJobHandler extends AgentJobHandler {
         private final IntSupplier sentCountSupplier;
         private final AgentJobExecutionResult result;
+        private final boolean pending;
+        private final CompletableFuture<AgentJobExecutionResult> pendingResult = new CompletableFuture<>();
         private int sentCountAtStart;
 
-        private FakeJobHandler(IntSupplier sentCountSupplier, AgentJobExecutionResult result) {
+        private FakeJobHandler(IntSupplier sentCountSupplier, AgentJobExecutionResult result, boolean pending) {
             this.sentCountSupplier = sentCountSupplier;
             this.result = result;
+            this.pending = pending;
         }
 
         @Override
         public CompletableFuture<AgentJobExecutionResult> handleAsync(AgentRelayJobRequest request) {
             sentCountAtStart = sentCountSupplier.getAsInt();
+            if (pending) {
+                return pendingResult;
+            }
             if (result != null) {
                 return CompletableFuture.completedFuture(result);
             }
@@ -437,6 +510,10 @@ final class AgentWebSocketClientTest {
 
         boolean acceptedWasSentBeforeStart() {
             return sentCountAtStart > 0;
+        }
+
+        void complete(AgentJobExecutionResult result) {
+            pendingResult.complete(result);
         }
     }
 

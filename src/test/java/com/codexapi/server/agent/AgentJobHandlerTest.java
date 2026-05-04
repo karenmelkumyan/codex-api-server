@@ -62,7 +62,7 @@ final class AgentJobHandlerTest {
     }
 
     @Test
-    void nonzeroCodexExecutionIncludesStderrWhenStdoutIsBlank() throws Exception {
+    void nonzeroCodexExecutionUsesGenericFailureWhenStdoutIsBlank() throws Exception {
         AgentJobExecutionResult result = handler(script("""
                 #!/bin/sh
                 cat >/dev/null
@@ -73,8 +73,8 @@ final class AgentJobHandlerTest {
         assertEquals(false, result.ok());
         assertEquals("failed", result.status());
         assertEquals(7, result.exitCode());
-        assertTrue(result.message().contains("Codex execution failed."));
-        assertTrue(result.message().contains("codex transcript tail"));
+        assertEquals("Codex execution failed.", result.message());
+        assertFalse(result.message().contains("codex transcript tail"));
         assertEquals(true, result.stderrPresent());
         assertEquals("CODEX_EXEC_FAILED", result.error());
     }
@@ -94,7 +94,7 @@ final class AgentJobHandlerTest {
     }
 
     @Test
-    void timeoutIncludesCapturedStderrWhenPresent() throws Exception {
+    void timeoutUsesGenericMessageWhenCapturedStderrIsPresent() throws Exception {
         AgentJobExecutionResult result = handler(script("""
                 #!/bin/sh
                 echo "still working on static site" >&2
@@ -103,8 +103,8 @@ final class AgentJobHandlerTest {
 
         assertEquals(false, result.ok());
         assertEquals("timed_out", result.status());
-        assertTrue(result.message().contains("Codex execution timed out."));
-        assertTrue(result.message().contains("still working on static site"));
+        assertEquals("Codex execution timed out.", result.message());
+        assertFalse(result.message().contains("still working on static site"));
         assertEquals("CODEX_EXEC_TIMED_OUT", result.error());
         assertEquals(true, result.stderrPresent());
     }
