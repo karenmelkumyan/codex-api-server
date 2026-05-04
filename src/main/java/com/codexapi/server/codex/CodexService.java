@@ -4,6 +4,7 @@ import com.codexapi.server.config.Config;
 import com.codexapi.server.history.ExecutionRecord;
 import com.codexapi.server.history.HistoryService;
 import com.codexapi.server.http.ApiException;
+import com.codexapi.server.process.ProcessOutputListener;
 import com.codexapi.server.process.ProcessResult;
 import com.codexapi.server.process.ProcessRunner;
 import com.codexapi.server.session.Session;
@@ -48,6 +49,10 @@ public final class CodexService {
     }
 
     public CodexExecResponse execute(Session session, CodexExecRequest request) {
+        return execute(session, request, null);
+    }
+
+    public CodexExecResponse execute(Session session, CodexExecRequest request, ProcessOutputListener outputListener) {
         ValidatedRequest validatedRequest = validate(request, session.defaultTimeoutSeconds());
         String executionId = generateExecutionId();
         String startedAt = Instant.now().toString();
@@ -64,7 +69,8 @@ public final class CodexService {
                 Path.of(session.workingDirectory()),
                 ProcessRunner.DEFAULT_STDOUT_BYTES,
                 ProcessRunner.DEFAULT_STDERR_BYTES,
-                validatedRequest.prompt()
+                validatedRequest.prompt(),
+                sanitizeLiveOutput(outputListener, validatedRequest.prompt())
         );
 
         String finishedAt = Instant.now().toString();
@@ -108,6 +114,17 @@ public final class CodexService {
         }
 
         return response;
+    }
+
+    private ProcessOutputListener sanitizeLiveOutput(ProcessOutputListener outputListener, String prompt) {
+        if (outputListener == null) {
+            return null;
+        }
+        return (stream, content, truncated) -> outputListener.onOutput(
+                stream,
+                sanitizePrompt(content, prompt),
+                truncated
+        );
     }
 
     private ValidatedRequest validate(CodexExecRequest request, int sessionDefaultTimeoutSeconds) {

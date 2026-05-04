@@ -21,11 +21,14 @@ final class ConfigTest {
         Config config = Config.fromEnvironment(Map.of());
 
         assertEquals("127.0.0.1", config.host());
+        assertEquals(1800, config.execDefaultTimeoutSeconds());
+        assertEquals(7200, config.execMaxTimeoutSeconds());
         assertEquals(1_000_000, config.maxRequestBytes());
         assertTrue(config.agent().enabled());
         assertTrue(config.agent().active());
         assertEquals("https://emebridge.eagma.com", config.agent().bridgeBaseUrl().orElseThrow());
         assertTrue(config.agent().pairOnStart());
+        assertEquals(7200, config.agent().jobMaxTimeoutSeconds());
         assertEquals(
                 Path.of(System.getProperty("user.home"), ".codex", "eme-codex-agent", "agent.json").toString(),
                 config.agent().stateFile()
@@ -190,10 +193,10 @@ final class ConfigTest {
 
     @Test
     void agentJobMaxTimeoutDefaultsToExecMaxTimeout() {
-        Config config = Config.fromEnvironment(Map.of("CODEX_EXEC_MAX_TIMEOUT", "900"));
+        Config config = Config.fromEnvironment(Map.of("CODEX_EXEC_MAX_TIMEOUT", "7200"));
 
-        assertEquals(900, config.execMaxTimeoutSeconds());
-        assertEquals(900, config.agent().jobMaxTimeoutSeconds());
+        assertEquals(7200, config.execMaxTimeoutSeconds());
+        assertEquals(7200, config.agent().jobMaxTimeoutSeconds());
     }
 
     @Test

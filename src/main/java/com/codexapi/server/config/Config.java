@@ -19,8 +19,8 @@ public record Config(
     private static final int DEFAULT_PORT = 8765;
     private static final String DEFAULT_CODEX_CLI_PATH = "codex";
     private static final String DEFAULT_SESSIONS_FILE = "./data/sessions.json";
-    private static final int DEFAULT_EXEC_DEFAULT_TIMEOUT_SECONDS = 600;
-    private static final int DEFAULT_EXEC_MAX_TIMEOUT_SECONDS = 1800;
+    private static final int DEFAULT_EXEC_DEFAULT_TIMEOUT_SECONDS = 1800;
+    private static final int DEFAULT_EXEC_MAX_TIMEOUT_SECONDS = 7200;
     private static final boolean DEFAULT_ALLOW_REMOTE_BIND = false;
     private static final int DEFAULT_MAX_REQUEST_BYTES = 1_000_000;
 

@@ -37,7 +37,7 @@ public record AgentConfig(
     private static final String DEFAULT_SANDBOX_MODE = "workspace-write";
 
     public static AgentConfig fromEnvironment(Map<String, String> env) {
-        return fromEnvironment(env, intValue(env, "CODEX_EXEC_MAX_TIMEOUT", 1800));
+        return fromEnvironment(env, intValue(env, "CODEX_EXEC_MAX_TIMEOUT", 7200));
     }
 
     public static AgentConfig fromEnvironment(Map<String, String> env, int execMaxTimeoutSeconds) {

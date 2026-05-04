@@ -169,7 +169,7 @@ curl -X POST http://127.0.0.1:8765/api/sessions \
     "name": "codex-api-server",
     "workingDirectory": ".",
     "description": "Java API server around local Codex CLI",
-    "defaultTimeoutSeconds": 600
+    "defaultTimeoutSeconds": 1800
   }'
 ```
 
@@ -185,8 +185,8 @@ Configuration is read from environment variables.
 | `CODEX_API_TOKEN` | unset | Optional bearer token for protected `/api/*` routes. When unset, protected local API routes return `AUTH_TOKEN_NOT_CONFIGURED`. |
 | `CODEX_CLI_PATH` | `codex` | Path or command name for the Codex CLI status check. |
 | `CODEX_SESSIONS_FILE` | `./data/sessions.json` | Session storage file path. |
-| `CODEX_EXEC_DEFAULT_TIMEOUT` | `600` | Default execution timeout in seconds. |
-| `CODEX_EXEC_MAX_TIMEOUT` | `1800` | Maximum execution timeout in seconds. |
+| `CODEX_EXEC_DEFAULT_TIMEOUT` | `1800` | Default execution timeout in seconds. |
+| `CODEX_EXEC_MAX_TIMEOUT` | `7200` | Maximum execution timeout in seconds. |
 | `CODEX_ALLOW_REMOTE_BIND` | `false` | Allows binding to non-local hosts when set to `true`. |
 | `CODEX_MAX_REQUEST_BYTES` | `1000000` | Maximum JSON request body size for POST endpoints. |
 | `CODEX_AGENT_ENABLED` | `true` | Enables the outbound local-agent connector. Set to `false` to run without bridge pairing. |
@@ -347,7 +347,7 @@ SUBMIT_JSON="$(curl -sS -X POST "${BRIDGE_BASE_URL%/}/tools/${BRIDGE_KEY}/codex_
   -H 'Content-Type: application/json' \
   -d '{
     "message": "Inspect this repository and summarize the connector mode implementation.",
-    "timeoutSeconds": 600
+    "timeoutSeconds": 1800
   }')"
 echo "$SUBMIT_JSON" | jq .
 
@@ -365,8 +365,10 @@ curl -sS -X POST "${BRIDGE_BASE_URL%/}/tools/${BRIDGE_KEY}/codex_read_log" \
 
 The bridge dispatches `job.request` over the connector WebSocket. The connector
 sends `job.accepted`, sends `job.progress` when execution starts and as a
-periodic heartbeat, executes Codex locally, and sends `job.result`; the bridge
-stores safe progress events and the safe response for `codex_read_log`.
+periodic heartbeat, streams bounded safe `job.transcript` stdout/stderr chunks
+while Codex output arrives, executes Codex locally, and sends `job.result`; the
+bridge stores safe progress events, durable transcript chunks, and the safe
+response for `codex_read_log` / `codex_read_transcript`.
 
 ## Relay Execution Internals
 
@@ -381,7 +383,8 @@ and may appear in `/api/sessions`. Because execution goes through
 `CodexService`, relay jobs write the same metadata-only execution history as
 normal `POST /api/sessions/{sessionId}/codex/exec` calls: prompt text is
 omitted, stdout/stderr previews are bounded, and the session `lastUsedAt` value
-is updated. Progress heartbeats are generic and do not stream stdout or stderr.
+is updated. Progress heartbeats remain generic; detailed relay output is sent as
+separate safe transcript chunks and is not mixed into lifecycle progress events.
 
 If the WebSocket disconnects while Codex is still running, V1 lets the local
 Codex process continue. When the process completes, the connector attempts to
@@ -482,7 +485,7 @@ The request body is JSON:
 ```json
 {
   "prompt": "Inspect the project and summarize it.",
-  "timeoutSeconds": 600,
+  "timeoutSeconds": 1800,
   "model": null,
   "profile": null,
   "sandbox": "read-only",

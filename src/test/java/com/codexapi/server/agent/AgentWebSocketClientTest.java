@@ -1,6 +1,8 @@
 package com.codexapi.server.agent;
 
 import com.codexapi.server.config.AgentConfig;
+import com.codexapi.server.process.ProcessOutputListener;
+import com.codexapi.server.process.ProcessOutputStream;
 import com.codexapi.server.util.JsonUtil;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.Test;
@@ -248,6 +250,75 @@ final class AgentWebSocketClientTest {
         assertTrue(result.get("error").isTextual());
     }
 
+    @Test
+    void jobRequestSendsSanitizedTranscriptBeforeResult() {
+        Fixture fixture = fixture(
+                null,
+                false,
+                List.of(new LiveOutput(
+                        ProcessOutputStream.STDOUT,
+                        "hello token=raw super-secret https://bridge.example.test/tools/bridge-key/codex_change",
+                        false
+                ))
+        );
+        fixture.startAndOpen();
+
+        fixture.receive("""
+                {
+                  "type": "job.request",
+                  "jobId": "job_1",
+                  "tool": "codex_change",
+                  "message": "make it so",
+                  "timeoutSeconds": 30
+                }
+                """);
+
+        JsonNode transcript = json(fixture.webSocket().sentTexts().get(fixture.webSocket().sentTexts().size() - 2));
+        JsonNode result = json(fixture.webSocket().lastText());
+
+        assertEquals("job.transcript", transcript.get("type").asText());
+        assertEquals("job_1", transcript.get("jobId").asText());
+        assertEquals("stdout", transcript.get("streamType").asText());
+        assertTrue(transcript.get("content").asText().contains("token=[redacted]"));
+        assertTrue(transcript.get("content").asText().contains("[redacted tool url]"));
+        assertFalse(transcript.get("content").asText().contains("raw"));
+        assertFalse(transcript.get("content").asText().contains("super-secret"));
+        assertEquals(false, transcript.get("truncated").asBoolean());
+        assertEquals("job.result", result.get("type").asText());
+    }
+
+    @Test
+    void jobRequestSendsBoundedTruncatedStderrTranscript() {
+        Fixture fixture = fixture(
+                null,
+                false,
+                List.of(new LiveOutput(
+                        ProcessOutputStream.STDERR,
+                        "x".repeat(AgentTranscriptSanitizer.MAX_CONTENT_CHARS + 100),
+                        false
+                ))
+        );
+        fixture.startAndOpen();
+
+        fixture.receive("""
+                {
+                  "type": "job.request",
+                  "jobId": "job_1",
+                  "tool": "codex_change",
+                  "message": "make it so",
+                  "timeoutSeconds": 30
+                }
+                """);
+
+        JsonNode transcript = json(fixture.webSocket().sentTexts().get(fixture.webSocket().sentTexts().size() - 2));
+
+        assertEquals("job.transcript", transcript.get("type").asText());
+        assertEquals("stderr", transcript.get("streamType").asText());
+        assertEquals(AgentTranscriptSanitizer.MAX_CONTENT_CHARS, transcript.get("content").asText().length());
+        assertTrue(transcript.get("content").asText().endsWith("[chunk truncated]"));
+        assertEquals(true, transcript.get("truncated").asBoolean());
+    }
+
     private Fixture fixture() {
         return fixture(null);
     }
@@ -261,13 +332,18 @@ final class AgentWebSocketClientTest {
     }
 
     private Fixture fixture(AgentJobExecutionResult jobResult, boolean pendingJob) {
+        return fixture(jobResult, pendingJob, List.of());
+    }
+
+    private Fixture fixture(AgentJobExecutionResult jobResult, boolean pendingJob, List<LiveOutput> liveOutputs) {
         FakeDialer dialer = new FakeDialer();
         FakeScheduler scheduler = new FakeScheduler();
         FakeStatusListener status = new FakeStatusListener();
         FakeJobHandler jobHandler = new FakeJobHandler(
                 () -> dialer.lastWebSocket().sentTexts().size(),
                 jobResult,
-                pendingJob
+                pendingJob,
+                liveOutputs
         );
         AgentStateStore stateStore = new AgentStateStore(tempDir.resolve("agent.json").toString());
         AgentState state = state();
@@ -290,6 +366,9 @@ final class AgentWebSocketClientTest {
                 () -> 0
         );
         return new Fixture(client, stateStore, state, dialer, scheduler, status, jobHandler);
+    }
+
+    private record LiveOutput(ProcessOutputStream stream, String content, boolean truncated) {
     }
 
     private AgentConfig config() {
@@ -487,18 +566,33 @@ final class AgentWebSocketClientTest {
         private final IntSupplier sentCountSupplier;
         private final AgentJobExecutionResult result;
         private final boolean pending;
+        private final List<LiveOutput> liveOutputs;
         private final CompletableFuture<AgentJobExecutionResult> pendingResult = new CompletableFuture<>();
         private int sentCountAtStart;
 
-        private FakeJobHandler(IntSupplier sentCountSupplier, AgentJobExecutionResult result, boolean pending) {
+        private FakeJobHandler(
+                IntSupplier sentCountSupplier,
+                AgentJobExecutionResult result,
+                boolean pending,
+                List<LiveOutput> liveOutputs
+        ) {
             this.sentCountSupplier = sentCountSupplier;
             this.result = result;
             this.pending = pending;
+            this.liveOutputs = liveOutputs;
         }
 
         @Override
-        public CompletableFuture<AgentJobExecutionResult> handleAsync(AgentRelayJobRequest request) {
+        public CompletableFuture<AgentJobExecutionResult> handleAsync(
+                AgentRelayJobRequest request,
+                ProcessOutputListener outputListener
+        ) {
             sentCountAtStart = sentCountSupplier.getAsInt();
+            if (outputListener != null) {
+                for (LiveOutput output : liveOutputs) {
+                    outputListener.onOutput(output.stream(), output.content(), output.truncated());
+                }
+            }
             if (pending) {
                 return pendingResult;
             }

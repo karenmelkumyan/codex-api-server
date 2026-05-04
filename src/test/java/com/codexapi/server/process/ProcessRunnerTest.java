@@ -5,6 +5,8 @@ import org.junit.jupiter.api.Test;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -48,6 +50,46 @@ final class ProcessRunnerTest {
 
         assertEquals(0, result.exitCode());
         assertEquals("hello stdin", result.stdout());
+    }
+
+    @Test
+    void invokesLiveListenerWhilePreservingFinalCapturedOutput() {
+        List<String> events = Collections.synchronizedList(new ArrayList<>());
+
+        ProcessResult result = new ProcessRunner().run(
+                javaCommand("output"),
+                Duration.ofSeconds(5),
+                null,
+                100,
+                100,
+                null,
+                (stream, content, truncated) -> events.add(stream.value() + ":" + content + ":" + truncated)
+        );
+
+        assertEquals(0, result.exitCode());
+        assertEquals("abcdefghij", result.stdout());
+        assertEquals("0123456789", result.stderr());
+        assertTrue(events.stream().anyMatch(event -> event.equals("stdout:abcdefghij:false")));
+        assertTrue(events.stream().anyMatch(event -> event.equals("stderr:0123456789:false")));
+    }
+
+    @Test
+    void listenerFailureDoesNotKillProcessCapture() {
+        ProcessResult result = new ProcessRunner().run(
+                javaCommand("output"),
+                Duration.ofSeconds(5),
+                null,
+                100,
+                100,
+                null,
+                (stream, content, truncated) -> {
+                    throw new IllegalStateException("listener failed");
+                }
+        );
+
+        assertEquals(0, result.exitCode());
+        assertEquals("abcdefghij", result.stdout());
+        assertEquals("0123456789", result.stderr());
     }
 
     private List<String> javaCommand(String mode) {

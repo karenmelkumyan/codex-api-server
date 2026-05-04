@@ -246,8 +246,18 @@ public final class AgentWebSocketClient {
                 Duration.ofSeconds(config.heartbeatIntervalSeconds()),
                 Duration.ofSeconds(config.heartbeatIntervalSeconds())
         );
+        String agentSecret = stateRef.get() == null ? null : stateRef.get().agentSecret();
+        AgentTranscriptEmitter transcriptEmitter = new AgentTranscriptEmitter(
+                jobId,
+                agentSecret,
+                scheduler,
+                (transcriptJobId, streamType, content, truncated) ->
+                        sendJobTranscript(webSocket, transcriptJobId, streamType, content, truncated)
+        );
 
-        jobHandler.handleAsync(request).whenComplete((result, exception) -> {
+        jobHandler.handleAsync(request, transcriptEmitter).whenComplete((result, exception) -> {
+            transcriptEmitter.flushNow();
+            transcriptEmitter.close();
             jobHeartbeat.cancel();
             if (exception != null) {
                 sendJobResult(webSocket, AgentJobExecutionResult.failed(
@@ -270,6 +280,25 @@ public final class AgentWebSocketClient {
         payload.put("eventType", eventType);
         payload.put("message", message);
         payload.put("details", Map.of());
+        sendJson(webSocket, payload);
+    }
+
+    private void sendJobTranscript(
+            WebSocket webSocket,
+            String jobId,
+            String streamType,
+            String content,
+            boolean truncated
+    ) {
+        if (content == null || content.isBlank()) {
+            return;
+        }
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("type", "job.transcript");
+        payload.put("jobId", jobId);
+        payload.put("streamType", streamType);
+        payload.put("content", content);
+        payload.put("truncated", truncated);
         sendJson(webSocket, payload);
     }
 

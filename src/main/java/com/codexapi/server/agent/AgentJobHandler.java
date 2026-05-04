@@ -5,6 +5,7 @@ import com.codexapi.server.codex.CodexExecResponse;
 import com.codexapi.server.codex.CodexService;
 import com.codexapi.server.config.Config;
 import com.codexapi.server.http.ApiException;
+import com.codexapi.server.process.ProcessOutputListener;
 import com.codexapi.server.session.Session;
 import com.codexapi.server.session.SessionService;
 import com.codexapi.server.session.SessionValidationException;
@@ -61,6 +62,13 @@ public class AgentJobHandler {
     }
 
     public CompletableFuture<AgentJobExecutionResult> handleAsync(AgentRelayJobRequest request) {
+        return handleAsync(request, null);
+    }
+
+    public CompletableFuture<AgentJobExecutionResult> handleAsync(
+            AgentRelayJobRequest request,
+            ProcessOutputListener outputListener
+    ) {
         if (!configured) {
             return CompletableFuture.completedFuture(localConnectorNotConfigured(jobId(request)));
         }
@@ -74,11 +82,11 @@ public class AgentJobHandler {
             ));
         }
 
-        return CompletableFuture.supplyAsync(() -> execute(request), executor)
+        return CompletableFuture.supplyAsync(() -> execute(request, outputListener), executor)
                 .whenComplete((result, exception) -> activeJob.set(false));
     }
 
-    private AgentJobExecutionResult execute(AgentRelayJobRequest request) {
+    private AgentJobExecutionResult execute(AgentRelayJobRequest request, ProcessOutputListener outputListener) {
         String jobId = jobId(request);
         try {
             AgentToolExecutionPlan plan = planner.plan(request);
@@ -92,7 +100,7 @@ public class AgentJobHandler {
                     plan.approvalPolicy(),
                     plan.ephemeral(),
                     true
-            ));
+            ), outputListener);
             boolean stderrPresent = stderrPresent(response);
             String message = executionMessage(response);
 

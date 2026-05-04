@@ -46,6 +46,18 @@ public final class ProcessRunner {
             int maxStderrBytes,
             String stdinText
     ) {
+        return run(command, timeout, workingDirectory, maxStdoutBytes, maxStderrBytes, stdinText, null);
+    }
+
+    public ProcessResult run(
+            List<String> command,
+            Duration timeout,
+            Path workingDirectory,
+            int maxStdoutBytes,
+            int maxStderrBytes,
+            String stdinText,
+            ProcessOutputListener outputListener
+    ) {
         if (command == null || command.isEmpty()) {
             throw new IllegalArgumentException("Command must not be empty");
         }
@@ -59,6 +71,7 @@ public final class ProcessRunner {
             throw new IllegalArgumentException("maxStderrBytes must be greater than zero");
         }
 
+        ProcessOutputListener safeOutputListener = outputListener == null ? ProcessOutputListener.noop() : outputListener;
         long startNanos = System.nanoTime();
         Process process;
         try {
@@ -73,11 +86,11 @@ public final class ProcessRunner {
 
         ExecutorService streamReaders = Executors.newFixedThreadPool(3);
         CompletableFuture<CapturedOutput> stdout = CompletableFuture.supplyAsync(
-                () -> readLimited(process.getInputStream(), maxStdoutBytes),
+                () -> readLimited(process.getInputStream(), maxStdoutBytes, ProcessOutputStream.STDOUT, safeOutputListener),
                 streamReaders
         );
         CompletableFuture<CapturedOutput> stderr = CompletableFuture.supplyAsync(
-                () -> readLimited(process.getErrorStream(), maxStderrBytes),
+                () -> readLimited(process.getErrorStream(), maxStderrBytes, ProcessOutputStream.STDERR, safeOutputListener),
                 streamReaders
         );
         CompletableFuture<Void> stdin = CompletableFuture.runAsync(
@@ -140,7 +153,12 @@ public final class ProcessRunner {
         return null;
     }
 
-    private static CapturedOutput readLimited(InputStream inputStream, int maxBytes) {
+    private static CapturedOutput readLimited(
+            InputStream inputStream,
+            int maxBytes,
+            ProcessOutputStream stream,
+            ProcessOutputListener outputListener
+    ) {
         try {
             ByteArrayOutputStream capturedBytes = new ByteArrayOutputStream(Math.min(maxBytes, 8192));
             byte[] buffer = new byte[8192];
@@ -153,10 +171,14 @@ public final class ProcessRunner {
                     int bytesToCapture = Math.min(bytesRead, remainingBytes);
                     capturedBytes.write(buffer, 0, bytesToCapture);
                     remainingBytes -= bytesToCapture;
+                    notifyOutputListener(outputListener, stream, buffer, bytesToCapture, bytesToCapture < bytesRead);
                     if (bytesToCapture < bytesRead) {
                         truncated = true;
                     }
                 } else {
+                    if (!truncated) {
+                        notifyOutputListener(outputListener, stream, new byte[0], 0, true);
+                    }
                     truncated = true;
                 }
             }
@@ -164,6 +186,24 @@ public final class ProcessRunner {
             return new CapturedOutput(capturedBytes.toString(StandardCharsets.UTF_8), truncated);
         } catch (IOException exception) {
             return new CapturedOutput("", false);
+        }
+    }
+
+    private static void notifyOutputListener(
+            ProcessOutputListener outputListener,
+            ProcessOutputStream stream,
+            byte[] buffer,
+            int length,
+            boolean truncated
+    ) {
+        if (length <= 0 && !truncated) {
+            return;
+        }
+        try {
+            String content = length <= 0 ? "" : new String(buffer, 0, length, StandardCharsets.UTF_8);
+            outputListener.onOutput(stream, content, truncated);
+        } catch (RuntimeException exception) {
+            System.err.println("process output listener failed; continuing process capture");
         }
     }
 

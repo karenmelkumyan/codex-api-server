@@ -13,6 +13,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executor;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -218,6 +219,26 @@ final class AgentJobHandlerTest {
 
         assertEquals(true, result.ok());
         assertEquals("skip git check enabled", result.message());
+    }
+
+    @Test
+    void relayExecutionEmitsLiveStdoutAndStderrChunks() throws Exception {
+        CopyOnWriteArrayList<String> chunks = new CopyOnWriteArrayList<>();
+
+        AgentJobExecutionResult result = handler(script("""
+                #!/bin/sh
+                cat >/dev/null
+                echo "live stdout"
+                echo "live stderr" >&2
+                exit 0
+                """)).handleAsync(
+                job("codex_change", 5),
+                (stream, content, truncated) -> chunks.add(stream.value() + ":" + content + ":" + truncated)
+        ).join();
+
+        assertEquals(true, result.ok());
+        assertTrue(chunks.stream().anyMatch(chunk -> chunk.equals("stdout:live stdout\n:false")));
+        assertTrue(chunks.stream().anyMatch(chunk -> chunk.equals("stderr:live stderr\n:false")));
     }
 
     private AgentJobHandler handler(Path codexCliPath) {
