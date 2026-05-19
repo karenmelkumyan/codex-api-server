@@ -307,7 +307,8 @@ final class AgentJobHandlerTest {
                         2,
                         60,
                         agentMaxTimeout,
-                        "workspace-write"
+                        "workspace-write",
+                        "read-only"
                 )
         );
     }

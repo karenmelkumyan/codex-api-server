@@ -370,6 +370,13 @@ omitted, stdout/stderr previews are bounded, and the session `lastUsedAt` value
 is updated. Progress events remain lifecycle-oriented; detailed relay output is
 sent separately as safe transcript chunks.
 
+Relay sandboxing is configured by tool class. `CODEX_AGENT_READONLY_SANDBOX_MODE`
+controls `codex_readonly` and defaults to `read-only`.
+`CODEX_AGENT_SANDBOX_MODE` controls `codex_verify` and `codex_change` and
+defaults to `workspace-write`. Operators may set either value to
+`danger-full-access` when the connector should run Codex without filesystem
+sandboxing.
+
 If the bridge disconnects while a relay job is running, V1 lets the local Codex
 process continue. When the process completes, the connector attempts to send
 `job.result` on the same WebSocket instance that delivered the original

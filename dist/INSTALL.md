@@ -41,12 +41,13 @@ asks whether to restart it. Press Enter to stop the existing listener and start
 again, or type anything else to keep the current process. In non-interactive
 scripts, set `CODEX_API_RESTART_EXISTING=true` to restart automatically.
 
-Mutable relay jobs run with Codex CLI's `workspace-write` sandbox by default.
-For trusted local testing where you want Codex to run without filesystem
-sandboxing, start the launcher with:
+`codex_readonly` relay jobs run with Codex CLI's `read-only` sandbox by
+default, while mutable relay jobs run with `workspace-write`. For trusted local
+testing where you want relay jobs to run without filesystem sandboxing, start
+the launcher with:
 
 ```bash
-CODEX_AGENT_SANDBOX_MODE=danger-full-access /path/to/codex-api-server-0.1.0-SNAPSHOT/bin/codex-api-server
+CODEX_AGENT_READONLY_SANDBOX_MODE=danger-full-access CODEX_AGENT_SANDBOX_MODE=danger-full-access /path/to/codex-api-server-0.1.0-SNAPSHOT/bin/codex-api-server
 ```
 
 Run the smoke test from another terminal after setting `CODEX_API_TOKEN`:

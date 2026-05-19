@@ -203,6 +203,7 @@ Configuration is read from environment variables.
 | `CODEX_AGENT_RECONNECT_MAX_SECONDS` | `60` | Maximum reconnect delay for bridge connection attempts. |
 | `CODEX_AGENT_JOB_MAX_TIMEOUT_SECONDS` | `CODEX_EXEC_MAX_TIMEOUT` | Maximum relay job timeout accepted by the connector. |
 | `CODEX_AGENT_SANDBOX_MODE` | `workspace-write` | Sandbox used for `codex_verify` and `codex_change` relay jobs. Set to `danger-full-access` only when you trust the task and want Codex CLI to run without filesystem sandboxing. |
+| `CODEX_AGENT_READONLY_SANDBOX_MODE` | `read-only` | Sandbox used for `codex_readonly` relay jobs. Set to `danger-full-access` only when you trust read-only relay prompts to inspect the host without Codex sandboxing. |
 
 Remote binding is disabled by default. If `CODEX_API_HOST` is set to a non-local
 address, `CODEX_ALLOW_REMOTE_BIND=true` must also be set.
@@ -226,10 +227,11 @@ background, sends `agent.hello`, keeps heartbeat diagnostics, and currently
 accepts relay jobs for `codex_readonly`, `codex_verify`, and `codex_change`.
 Relay execution is single-job-at-a-time, uses `approvalPolicy=never` and
 ephemeral Codex runs, sends bounded `job.progress` start/heartbeat messages
-while Codex is running, and returns safe result fields. By default, mutable
-relay jobs use the Codex CLI `workspace-write` sandbox. Set
-`CODEX_AGENT_SANDBOX_MODE=danger-full-access` to run mutable relay jobs with
-full filesystem access; `codex_readonly` remains `read-only`.
+while Codex is running, and returns safe result fields. By default,
+`codex_readonly` uses the Codex CLI `read-only` sandbox and mutable relay jobs
+use the `workspace-write` sandbox. Set `CODEX_AGENT_READONLY_SANDBOX_MODE` and
+`CODEX_AGENT_SANDBOX_MODE` to `danger-full-access` only when you trust relay
+prompts to inspect or change the host without Codex sandboxing.
 This repository implements connector-side relay support. EME Chat now provides
 the server-side connector binding endpoints and browser-facing connector
 state/claim flow; the full end-to-end product flow across deployed EME Chat,
@@ -501,8 +503,8 @@ The request body is JSON:
 <CODEX_CLI_PATH> exec --cd <session-root> --color never [options] --output-last-message <temp-file> -
 ```
 
-Allowed sandbox values are `read-only` and `workspace-write`.
-The unrestricted full-access sandbox mode is not allowed. Allowed approval policies are `untrusted`,
+Allowed sandbox values are `read-only`, `workspace-write`, and
+`danger-full-access`. Allowed approval policies are `untrusted`,
 `on-request`, and `never`. The approval policy is passed through Codex config
 override syntax rather than a shell:
 

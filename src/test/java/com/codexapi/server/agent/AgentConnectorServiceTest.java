@@ -96,7 +96,8 @@ final class AgentConnectorServiceTest {
                         2,
                         60,
                         1800,
-                        "workspace-write"
+                        "workspace-write",
+                        "read-only"
                 )),
                 () -> {
                     throw new AssertionError("state store should not be loaded");

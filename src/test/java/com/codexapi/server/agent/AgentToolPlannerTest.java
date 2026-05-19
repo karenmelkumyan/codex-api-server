@@ -81,6 +81,25 @@ final class AgentToolPlannerTest {
     }
 
     @Test
+    void usesConfiguredSandboxForReadonlyRelayTool() {
+        AgentToolPlanner planner = new AgentToolPlanner(config(
+                120,
+                90,
+                "danger-full-access",
+                "danger-full-access"
+        ));
+
+        AgentToolExecutionPlan readonly = planner.plan(new AgentRelayJobRequest(
+                "job_1",
+                "codex_readonly",
+                "inspect",
+                30
+        ));
+
+        assertEquals("danger-full-access", readonly.sandbox());
+    }
+
+    @Test
     void capsTimeoutByAgentAndExecMax() {
         AgentToolPlanner planner = new AgentToolPlanner(config(120, 90));
 
@@ -140,6 +159,15 @@ final class AgentToolPlannerTest {
     }
 
     private Config config(int execMaxTimeoutSeconds, int agentMaxTimeoutSeconds, String sandboxMode) {
+        return config(execMaxTimeoutSeconds, agentMaxTimeoutSeconds, sandboxMode, "read-only");
+    }
+
+    private Config config(
+            int execMaxTimeoutSeconds,
+            int agentMaxTimeoutSeconds,
+            String sandboxMode,
+            String readonlySandboxMode
+    ) {
         return new Config(
                 "127.0.0.1",
                 8765,
@@ -154,7 +182,8 @@ final class AgentToolPlannerTest {
                         "CODEX_AGENT_STATE_FILE", tempDir.resolve("agent.json").toString(),
                         "CODEX_AGENT_WORKING_DIRECTORY", tempDir.toString(),
                         "CODEX_AGENT_JOB_MAX_TIMEOUT_SECONDS", String.valueOf(agentMaxTimeoutSeconds),
-                        "CODEX_AGENT_SANDBOX_MODE", sandboxMode
+                        "CODEX_AGENT_SANDBOX_MODE", sandboxMode,
+                        "CODEX_AGENT_READONLY_SANDBOX_MODE", readonlySandboxMode
                 ), execMaxTimeoutSeconds)
         );
     }

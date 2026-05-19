@@ -7,7 +7,6 @@ public final class AgentToolPlanner {
     public static final String INVALID_JOB_REQUEST = "INVALID_JOB_REQUEST";
     private static final String APPROVAL_POLICY = "never";
     private static final boolean EPHEMERAL = true;
-    private static final String READONLY_SANDBOX = "read-only";
 
     private static final String READONLY_PROMPT_PREFIX = """
             Tool mode: codex_readonly.
@@ -50,7 +49,7 @@ public final class AgentToolPlanner {
         }
         String tool = request.tool() == null ? "" : request.tool().trim();
         return switch (tool) {
-            case "codex_readonly" -> plan(READONLY_PROMPT_PREFIX, READONLY_SANDBOX, request);
+            case "codex_readonly" -> plan(READONLY_PROMPT_PREFIX, config.agent().readonlySandboxMode(), request);
             case "codex_verify" -> plan(VERIFY_PROMPT_PREFIX, config.agent().sandboxMode(), request);
             case "codex_change" -> plan(CHANGE_PROMPT_PREFIX, config.agent().sandboxMode(), request);
             case "codex_read_log" -> throw unsupported("codex_read_log is not supported as a relay job.");

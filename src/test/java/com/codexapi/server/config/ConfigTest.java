@@ -107,7 +107,8 @@ final class ConfigTest {
                 2,
                 60,
                 1800,
-                "workspace-write"
+                "workspace-write",
+                "read-only"
         );
 
         assertFalse(config.active());
@@ -130,7 +131,8 @@ final class ConfigTest {
                 Map.entry("CODEX_AGENT_RECONNECT_INITIAL_SECONDS", "3"),
                 Map.entry("CODEX_AGENT_RECONNECT_MAX_SECONDS", "45"),
                 Map.entry("CODEX_AGENT_JOB_MAX_TIMEOUT_SECONDS", "900"),
-                Map.entry("CODEX_AGENT_SANDBOX_MODE", "danger-full-access")
+                Map.entry("CODEX_AGENT_SANDBOX_MODE", "danger-full-access"),
+                Map.entry("CODEX_AGENT_READONLY_SANDBOX_MODE", "danger-full-access")
         ));
 
         AgentConfig agent = config.agent();
@@ -149,6 +151,7 @@ final class ConfigTest {
         assertEquals(45, agent.reconnectMaxSeconds());
         assertEquals(900, agent.jobMaxTimeoutSeconds());
         assertEquals("danger-full-access", agent.sandboxMode());
+        assertEquals("danger-full-access", agent.readonlySandboxMode());
         assertTrue(agent.inactiveReason().isEmpty());
     }
 
@@ -161,6 +164,19 @@ final class ConfigTest {
 
         assertEquals(
                 "CODEX_AGENT_SANDBOX_MODE must be one of: workspace-write, danger-full-access",
+                exception.getMessage()
+        );
+    }
+
+    @Test
+    void rejectsInvalidAgentReadonlySandboxMode() {
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> Config.fromEnvironment(Map.of("CODEX_AGENT_READONLY_SANDBOX_MODE", "invalid"))
+        );
+
+        assertEquals(
+                "CODEX_AGENT_READONLY_SANDBOX_MODE must be one of: read-only, workspace-write, danger-full-access",
                 exception.getMessage()
         );
     }

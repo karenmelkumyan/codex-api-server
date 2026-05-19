@@ -20,7 +20,8 @@ public record AgentConfig(
         int reconnectInitialSeconds,
         int reconnectMaxSeconds,
         int jobMaxTimeoutSeconds,
-        String sandboxMode
+        String sandboxMode,
+        String readonlySandboxMode
 ) {
     private static final boolean DEFAULT_ENABLED = true;
     private static final String DEFAULT_BRIDGE_BASE_URL = "https://emebridge.eagma.com";
@@ -35,6 +36,7 @@ public record AgentConfig(
     private static final int DEFAULT_RECONNECT_INITIAL_SECONDS = 2;
     private static final int DEFAULT_RECONNECT_MAX_SECONDS = 60;
     private static final String DEFAULT_SANDBOX_MODE = "workspace-write";
+    private static final String DEFAULT_READONLY_SANDBOX_MODE = "read-only";
 
     public static AgentConfig fromEnvironment(Map<String, String> env) {
         return fromEnvironment(env, intValue(env, "CODEX_EXEC_MAX_TIMEOUT", 7200));
@@ -55,7 +57,8 @@ public record AgentConfig(
                 intValue(env, "CODEX_AGENT_RECONNECT_INITIAL_SECONDS", DEFAULT_RECONNECT_INITIAL_SECONDS),
                 intValue(env, "CODEX_AGENT_RECONNECT_MAX_SECONDS", DEFAULT_RECONNECT_MAX_SECONDS),
                 intValue(env, "CODEX_AGENT_JOB_MAX_TIMEOUT_SECONDS", execMaxTimeoutSeconds),
-                stringValue(env, "CODEX_AGENT_SANDBOX_MODE", DEFAULT_SANDBOX_MODE)
+                stringValue(env, "CODEX_AGENT_SANDBOX_MODE", DEFAULT_SANDBOX_MODE),
+                stringValue(env, "CODEX_AGENT_READONLY_SANDBOX_MODE", DEFAULT_READONLY_SANDBOX_MODE)
         );
 
         config.validate();
@@ -109,6 +112,13 @@ public record AgentConfig(
         if (!"workspace-write".equals(sandboxMode) && !"danger-full-access".equals(sandboxMode)) {
             throw new IllegalArgumentException(
                     "CODEX_AGENT_SANDBOX_MODE must be one of: workspace-write, danger-full-access"
+            );
+        }
+        if (!"read-only".equals(readonlySandboxMode)
+                && !"workspace-write".equals(readonlySandboxMode)
+                && !"danger-full-access".equals(readonlySandboxMode)) {
+            throw new IllegalArgumentException(
+                    "CODEX_AGENT_READONLY_SANDBOX_MODE must be one of: read-only, workspace-write, danger-full-access"
             );
         }
         if (active() && !Files.isDirectory(Path.of(workingDirectory))) {
